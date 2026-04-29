@@ -37,5 +37,4 @@ jsonwebtoken.workspace = true
 ed25519-dalek.workspace = true
 base64.workspace = true
 ring.workspace = true
-gpucluster-ca.workspace = true
 rcgen.workspace = true
