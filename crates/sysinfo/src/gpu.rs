@@ -60,6 +60,7 @@ pub fn detect() -> Result<Vec<pb::GpuInfo>> {
     Ok(Vec::new())
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn classify_arch(major: i32, minor: i32) -> String {
     match (major, minor) {
         (12, _) => "Blackwell".into(),
