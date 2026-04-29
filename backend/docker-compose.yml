@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   caddy:
     image: caddy:2
@@ -70,15 +68,18 @@ services:
     depends_on: [coordinator]
 
   wg-hub:
+    # Headscale (WireGuard mesh coordinator) is enabled in Phase 1+.
+    # Start with: docker compose --profile mesh up -d
+    profiles: ["mesh"]
     image: headscale/headscale:latest
     restart: unless-stopped
-    command: headscale serve
+    command: ["serve"]
     volumes:
       - ./wg-hub/config:/etc/headscale
       - wg-hub-data:/var/lib/headscale
     ports:
-      - "8080:8080"   # admin
-      - "9090:9090"   # metrics
+      - "8080:8080"
+      - "9090:9090"
       - "41641:41641/udp"
 
   postgres:
