@@ -65,6 +65,9 @@ async fn list_nodes(State(reg): State<Registry>) -> Json<Value> {
             // under `status_code` for clients that want to switch on it.
             map.insert("status".into(), Value::String(status_label(e.info.status).into()));
             map.insert("status_code".into(), Value::Number(e.info.status.into()));
+            // Dashboard table reads `id`; keep `node_id` for the canonical proto
+            // name. One row, two keys — costs nothing, avoids touching admin_ui.
+            map.insert("id".into(), Value::String(e.info.node_id.clone()));
         }
         obj
     }).collect();
