@@ -1,0 +1,39 @@
+[package]
+name = "gpucluster-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "gpucluster-gateway"
+path = "src/main.rs"
+
+[dependencies]
+gpucluster-common.workspace = true
+gpucluster-proto.workspace = true
+
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+axum.workspace = true
+hyper.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+clap.workspace = true
+config.workspace = true
+dotenvy.workspace = true
+
+rustls.workspace = true
+rustls-pemfile.workspace = true
+jsonwebtoken.workspace = true
+argon2.workspace = true
+governor.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+ipnet.workspace = true

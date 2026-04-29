@@ -1,0 +1,20 @@
+[package]
+name = "gpucluster-sysinfo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gpucluster-common.workspace = true
+gpucluster-proto.workspace = true
+
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+
+sysinfo.workspace = true
+mac_address.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+nvml-wrapper.workspace = true

@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package gpucluster.management.v1;
+
+import "node.proto";
+
+service ManagementService {
+  rpc GenerateEnrollToken(GenerateEnrollTokenRequest) returns (EnrollToken);
+  rpc CompleteEnrollment(EnrollmentRequest) returns (EnrollmentResponse);
+
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc GetNode(GetNodeRequest) returns (gpucluster.node.v1.NodeInfo);
+  rpc ApproveNode(ApproveNodeRequest) returns (Ack);
+  rpc RevokeNode(RevokeNodeRequest) returns (Ack);
+  rpc DrainNode(DrainNodeRequest) returns (Ack);
+
+  rpc GetNodeIpHistory(GetNodeIpHistoryRequest) returns (GetNodeIpHistoryResponse);
+}
+
+message Ack {
+  bool ok = 1;
+  string message = 2;
+}
+
+message GenerateEnrollTokenRequest {
+  string requested_by_user_id = 1;
+  string display_name_hint    = 2;
+  uint32 ttl_secs             = 3;
+}
+
+message EnrollToken {
+  string token = 1;
+  int64 expires_at_unix = 2;
+}
+
+message EnrollmentRequest {
+  string token = 1;
+  bytes  pubkey_ed25519 = 2;
+  string hw_fingerprint = 3;
+  string hostname = 4;
+  gpucluster.node.v1.OsInfo os = 5;
+  repeated gpucluster.node.v1.GpuInfo gpus = 6;
+  string agent_version = 7;
+}
+
+message EnrollmentResponse {
+  string node_id = 1;
+  bytes  client_cert_pem = 2;
+  bytes  ca_chain_pem    = 3;
+  string wg_config_ini   = 4;
+  string coordinator_endpoint = 5;
+}
+
+message ListNodesRequest {
+  uint32 page = 1;
+  uint32 page_size = 2;
+  string filter_status = 3;
+  string filter_owner  = 4;
+}
+
+message ListNodesResponse {
+  repeated gpucluster.node.v1.NodeInfo nodes = 1;
+  uint32 total = 2;
+}
+
+message GetNodeRequest  { string node_id = 1; }
+message ApproveNodeRequest { string node_id = 1; }
+message RevokeNodeRequest  { string node_id = 1; string reason = 2; }
+message DrainNodeRequest   { string node_id = 1; }
+
+message GetNodeIpHistoryRequest {
+  string node_id = 1;
+  uint32 limit   = 2;
+}
+
+message GetNodeIpHistoryResponse {
+  repeated IpHistoryEntry entries = 1;
+}
+
+message IpHistoryEntry {
+  int64  ts_unix          = 1;
+  string public_ip_v4     = 2;
+  string public_ip_v6     = 3;
+  string asn              = 4;
+  string country_code     = 5;
+  string city             = 6;
+  string source           = 7;  // "tls_socket" | "self_report"
+}

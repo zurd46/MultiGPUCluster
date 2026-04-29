@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package gpucluster.coordinator.v1;
+
+import "node.proto";
+
+service CoordinatorService {
+  rpc Register(RegisterRequest)     returns (RegisterResponse);
+  rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse);
+  rpc ReportGpuMetrics(GpuMetricsRequest) returns (Ack);
+  rpc StreamJobs(StreamJobsRequest) returns (stream JobAssignment);
+  rpc ReportJobStatus(JobStatusUpdate) returns (Ack);
+}
+
+message RegisterRequest {
+  string node_id = 1;
+  gpucluster.node.v1.NodeInfo info = 2;
+}
+
+message RegisterResponse {
+  string assigned_id = 1;
+  string coordinator_endpoint = 2;
+  uint32 heartbeat_interval_secs = 3;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  int64 ts_unix_ms = 2;
+  repeated GpuLiveStat gpus = 3;
+  uint32 active_jobs = 4;
+}
+
+message HeartbeatResponse {
+  int64 server_ts_unix_ms = 1;
+  bool drain_requested = 2;
+  bool reconfigure_requested = 3;
+}
+
+message GpuLiveStat {
+  uint32 index = 1;
+  uint64 vram_used_bytes = 2;
+  float  utilization_pct = 3;
+  float  temperature_c   = 4;
+  float  power_draw_w    = 5;
+}
+
+message GpuMetricsRequest {
+  string node_id = 1;
+  repeated GpuLiveStat samples = 2;
+}
+
+message Ack {
+  bool ok = 1;
+  string message = 2;
+}
+
+message StreamJobsRequest {
+  string node_id = 1;
+}
+
+message JobAssignment {
+  string job_id = 1;
+  JobKind kind = 2;
+  string spec_yaml = 3;
+  repeated string peer_node_ids = 4;
+  uint32 pipeline_stage = 5;
+  uint32 layer_start = 6;
+  uint32 layer_end = 7;
+}
+
+enum JobKind {
+  JOB_KIND_UNSPECIFIED = 0;
+  JOB_KIND_INFERENCE   = 1;
+  JOB_KIND_FINE_TUNE   = 2;
+}
+
+message JobStatusUpdate {
+  string node_id = 1;
+  string job_id = 2;
+  JobState state = 3;
+  string detail = 4;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED      = 1;
+  JOB_STATE_STARTING    = 2;
+  JOB_STATE_RUNNING     = 3;
+  JOB_STATE_COMPLETED   = 4;
+  JOB_STATE_FAILED      = 5;
+  JOB_STATE_CANCELLED   = 6;
+}

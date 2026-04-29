@@ -1,0 +1,22 @@
+[package]
+name = "gpucluster-ca"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gpucluster-common.workspace = true
+
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+rcgen.workspace = true
+x509-parser.workspace = true
+ring.workspace = true
+ed25519-dalek.workspace = true
+rustls-pemfile.workspace = true
+base64.workspace = true

@@ -1,0 +1,57 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock
+
+# C++ / CMake
+cpp/**/build/
+cpp/**/CMakeCache.txt
+cpp/**/CMakeFiles/
+*.o
+*.a
+*.so
+*.dylib
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Env / Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!**/test/*.key
+!**/test/*.pem
+secrets/
+secrets.toml
+
+# Local data (worker / coordinator)
+node-data/
+var-lib-gpucluster/
+*.sqlite
+*.sqlite-journal
+postgres-data/
+minio-data/
+redis-data/
+
+# Logs
+*.log
+logs/
+
+# Dashboard / Node
+dashboard/node_modules/
+dashboard/.svelte-kit/
+dashboard/.next/
+dashboard/dist/
+dashboard/build/
+
+# Models / Datasets (huge)
+models/
+datasets/
+*.gguf
+*.safetensors

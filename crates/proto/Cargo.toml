@@ -1,0 +1,18 @@
+[package]
+name = "gpucluster-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tonic.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[build-dependencies]
+tonic-build.workspace = true
