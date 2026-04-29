@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor, action, resource)\n         VALUES ('admin', 'API_KEY_REVOKED', $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e25b840e6a4e1b30d7fa0cce8401bb623427e7a1e61e8138c400f32f2123f3b0"
+}

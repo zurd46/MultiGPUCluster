@@ -33,6 +33,10 @@ enum Cmd {
         token: String,
         #[arg(long)]
         display_name: Option<String>,
+        /// Accept self-signed TLS certs from the backend. Only use for local
+        /// development (e.g. Caddy's internal CA on `https://localhost`).
+        #[arg(long, default_value_t = false)]
+        insecure: bool,
     },
     /// Run the persistent agent loop (typically invoked by service manager)
     Run,
@@ -58,9 +62,10 @@ async fn main() -> Result<()> {
     match cli.cmd {
         Cmd::Install                          => service::install().await,
         Cmd::Uninstall { purge }              => service::uninstall(purge).await,
-        Cmd::Enroll { backend, token, display_name } => enroll::run(&backend, &token, display_name.as_deref()).await,
+        Cmd::Enroll { backend, token, display_name, insecure } =>
+            enroll::run(&backend, &token, display_name.as_deref(), insecure).await,
         Cmd::Run                              => service::run_loop().await,
         Cmd::Status                           => service::status().await,
-        Cmd::ReEnroll { backend, token }      => enroll::run(&backend, &token, None).await,
+        Cmd::ReEnroll { backend, token }      => enroll::run(&backend, &token, None, false).await,
     }
 }
