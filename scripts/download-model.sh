@@ -4,48 +4,54 @@
 # every supported worker (RTX 3090 / 4090 / 5060 Ti / Apple M1+).
 #
 # Usage:
-#   scripts/download-model.sh                  # default model
-#   scripts/download-model.sh qwen2.5-0.5b     # named alias
-#   scripts/download-model.sh --url <https...> # arbitrary GGUF URL
+#   scripts/download-model.sh                  # default model (llama-3.2-1b)
+#   scripts/download-model.sh qwen2.5-0.5b     # named alias (smallest)
+#   scripts/download-model.sh tinyllama-1.1b   # named alias
+#   scripts/download-model.sh --url <URL> <FILE>
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 mkdir -p models
 
-# Curated aliases — small enough to download on a coffee break, useful enough
-# to actually validate the pipeline. Add more here, don't lie about sizes.
-declare_alias() { ALIASES["$1"]="$2:$3"; }
-declare -A ALIASES
-declare_alias "llama-3.2-1b" \
-    "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf" \
-    "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
-declare_alias "qwen2.5-0.5b" \
-    "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf" \
-    "qwen2.5-0.5b-instruct-q4_k_m.gguf"
-declare_alias "tinyllama-1.1b" \
-    "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf" \
-    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+ALIAS="${1:-llama-3.2-1b}"
 
-DEFAULT_ALIAS="llama-3.2-1b"
+case "$ALIAS" in
+    --url)
+        URL="${2:?--url requires <url> <filename>}"
+        FILE="${3:?--url requires <url> <filename>}"
+        ;;
+    llama-3.2-1b|"")
+        URL="https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+        FILE="Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+        ;;
+    qwen2.5-0.5b)
+        URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        FILE="qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        ;;
+    tinyllama-1.1b)
+        URL="https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+        FILE="tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+        ;;
+    list|--list)
+        cat <<'EOF'
+Available aliases:
+  llama-3.2-1b     Llama-3.2-1B-Instruct  Q4_K_M  ~770 MB  (default)
+  qwen2.5-0.5b     Qwen2.5-0.5B-Instruct  Q4_K_M  ~400 MB  (smallest)
+  tinyllama-1.1b   TinyLlama-1.1B-Chat    Q4_K_M  ~670 MB
 
-if [[ "${1:-}" == "--url" ]]; then
-    URL="${2:?--url requires a URL}"
-    FILE="$(basename "$URL")"
-elif [[ -n "${1:-}" ]]; then
-    ALIAS="$1"
-    if [[ -z "${ALIASES[$ALIAS]:-}" ]]; then
-        echo "unknown alias '$ALIAS'. Known: ${!ALIASES[*]}" >&2
+Custom URL:
+  scripts/download-model.sh --url <https-url> <output-filename>
+EOF
+        exit 0
+        ;;
+    *)
+        echo "unknown alias '$ALIAS'. Run: scripts/download-model.sh list" >&2
         exit 1
-    fi
-    URL="${ALIASES[$ALIAS]%%:*}"
-    FILE="${ALIASES[$ALIAS]##*:}"
-else
-    URL="${ALIASES[$DEFAULT_ALIAS]%%:*}"
-    FILE="${ALIASES[$DEFAULT_ALIAS]##*:}"
-fi
+        ;;
+esac
 
 DEST="models/$FILE"
-if [[ -f "$DEST" ]]; then
+if [ -f "$DEST" ]; then
     echo "✓ already present: $DEST"
     echo
     echo "Use it with:  MODEL_PATH=\"\$PWD/$DEST\" ./target/release/gpucluster-worker"
