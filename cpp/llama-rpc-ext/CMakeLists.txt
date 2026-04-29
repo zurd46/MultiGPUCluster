@@ -60,7 +60,9 @@ if(BUILD_RPC_SERVER)
         set(LLAMA_BUILD_TOOLS  ON CACHE BOOL "" FORCE)
         set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
         set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+        # Build the upstream llama-server too — it's the OpenAI-compatible HTTP
+        # endpoint each worker exposes for single-node inference dispatch.
+        set(LLAMA_BUILD_SERVER ON CACHE BOOL "" FORCE)
         add_subdirectory(${SUBMODULE_DIR} llama_cpp_build)
     endif()
 

@@ -104,6 +104,7 @@ async fn overview(State(s): State<Arc<GatewayState>>, headers: HeaderMap) -> imp
     let url_coord_nodes   = format!("{coord_url}/nodes");
     let url_mgmt_nodes    = format!("{mgmt_url}/api/v1/nodes");
     let url_openai_models = format!("{openai_url}/v1/models");
+    let url_mgmt_settings = format!("{mgmt_url}/api/v1/settings");
 
     // health checks (parallel)
     let h_mgmt   = check_health(&s.http, &url_mgmt_health);
@@ -111,12 +112,28 @@ async fn overview(State(s): State<Arc<GatewayState>>, headers: HeaderMap) -> imp
     let h_openai = check_health(&s.http, &url_openai_health);
 
     // payloads (parallel)
-    let p_coord  = fetch_json(&s.http, &url_coord_nodes, None);
-    let p_mgmt   = fetch_json(&s.http, &url_mgmt_nodes, bearer.as_deref());
-    let p_models = fetch_json(&s.http, &url_openai_models, None);
+    let p_coord    = fetch_json(&s.http, &url_coord_nodes, None);
+    let p_mgmt     = fetch_json(&s.http, &url_mgmt_nodes, bearer.as_deref());
+    let p_models   = fetch_json(&s.http, &url_openai_models, None);
+    let p_settings = fetch_json(&s.http, &url_mgmt_settings, bearer.as_deref());
 
-    let (m, c, o, coord_nodes, mgmt_nodes, models) =
-        tokio::join!(h_mgmt, h_coord, h_openai, p_coord, p_mgmt, p_models);
+    let (m, c, o, coord_nodes, mgmt_nodes, models, settings) =
+        tokio::join!(h_mgmt, h_coord, h_openai, p_coord, p_mgmt, p_models, p_settings);
+
+    // Derive the *effective* public base URL: prefer what the admin saved in
+    // settings, otherwise reconstruct it from the request that just reached
+    // us. Caddy adds X-Forwarded-Proto + Host, so this works behind TLS too;
+    // for direct gateway access we fall back to the bare Host header.
+    let saved_url = settings
+        .get("public_base_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let derived_url = derive_public_base_url(&headers);
+    let effective_url = saved_url
+        .clone()
+        .or_else(|| derived_url.clone())
+        .unwrap_or_default();
 
     let body = json!({
         "services": {
@@ -128,6 +145,12 @@ async fn overview(State(s): State<Arc<GatewayState>>, headers: HeaderMap) -> imp
         "coordinator": coord_nodes,
         "mgmt":        mgmt_nodes,
         "openai_api":  models,
+        "settings":    settings,
+        "endpoint": {
+            "public_base_url":         saved_url,
+            "derived_public_base_url": derived_url,
+            "effective_base_url":      effective_url,
+        },
     });
 
     let mut resp = (StatusCode::OK, Json(body)).into_response();
@@ -167,4 +190,23 @@ async fn fetch_json(http: &reqwest::Client, url: &str, bearer: Option<&str>) -> 
 
 fn status_str(ok: bool) -> &'static str {
     if ok { "ok" } else { "down" }
+}
+
+/// Reconstruct the public base URL the client used to reach us, so the admin
+/// UI / `/overview` can advertise a correct URL without anyone configuring it.
+///
+/// Order of trust:
+///   1. `X-Forwarded-Proto` + `X-Forwarded-Host` (Caddy / proxies)
+///   2. `Host` header (direct gateway access)
+///   3. `None` if nothing usable is present
+fn derive_public_base_url(headers: &HeaderMap) -> Option<String> {
+    let header = |k: &str| headers.get(k).and_then(|v| v.to_str().ok());
+
+    let proto = header("x-forwarded-proto").unwrap_or("http");
+    let host = header("x-forwarded-host")
+        .or_else(|| header("host"))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())?;
+
+    Some(format!("{proto}://{host}"))
 }
