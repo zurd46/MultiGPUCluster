@@ -108,3 +108,34 @@ pub async fn revoke(
     .ok();
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+/// Drain: stop accepting new jobs, but let existing work finish. The worker
+/// agent is expected to poll status and gracefully stop heartbeating after
+/// in-flight jobs are done; the coordinator will then transition it to
+/// `offline`.
+pub async fn drain(
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let res = sqlx::query!(
+        "UPDATE nodes SET status = 'draining'
+          WHERE id = $1 AND status IN ('online', 'degraded')",
+        id
+    )
+    .execute(&s.pool)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::Conflict(
+            "node not in a drainable state (must be online or degraded)".into(),
+        ));
+    }
+    sqlx::query!(
+        "INSERT INTO audit_log (actor, action, resource)
+         VALUES ('admin', 'NODE_DRAIN_REQUESTED', $1)",
+        id.to_string(),
+    )
+    .execute(&s.pool)
+    .await
+    .ok();
+    Ok(Json(serde_json::json!({ "ok": true })))
+}

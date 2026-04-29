@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE nodes SET status = 'draining'\n          WHERE id = $1 AND status IN ('online', 'degraded')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cb8f80cd0fff909c7a1ada4fb65fa5dd3d0a66d96474c7a8c07269be845bd242"
+}

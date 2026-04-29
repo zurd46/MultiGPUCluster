@@ -1,6 +1,7 @@
 pub mod enroll_token;
 pub mod enroll;
 pub mod nodes;
+pub mod audit;
 
 use serde::Serialize;
 

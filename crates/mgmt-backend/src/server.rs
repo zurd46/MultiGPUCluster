@@ -11,7 +11,7 @@ use crate::{
     auth, ca_store,
     config::MgmtConfig,
     db,
-    handlers::{enroll, enroll_token, nodes},
+    handlers::{audit, enroll, enroll_token, nodes},
     state::AppState,
 };
 
@@ -42,6 +42,8 @@ pub async fn run(cfg: MgmtConfig) -> Result<()> {
         .route("/api/v1/nodes/{id}",               get(nodes::get))
         .route("/api/v1/nodes/{id}/approve",       post(nodes::approve))
         .route("/api/v1/nodes/{id}/revoke",        post(nodes::revoke))
+        .route("/api/v1/nodes/{id}/drain",         post(nodes::drain))
+        .route("/api/v1/audit",                    get(audit::list))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_admin));
 
     let app = public.merge(admin).with_state(state);

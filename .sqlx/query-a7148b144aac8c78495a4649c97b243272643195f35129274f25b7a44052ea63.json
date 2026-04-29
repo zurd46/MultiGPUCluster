@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor, action, resource)\n         VALUES ('admin', 'NODE_DRAIN_REQUESTED', $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a7148b144aac8c78495a4649c97b243272643195f35129274f25b7a44052ea63"
+}
