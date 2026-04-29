@@ -5,6 +5,8 @@ services:
     ports:
       - "443:443"
       - "80:80"
+    environment:
+      BACKEND_DOMAIN: ${BACKEND_DOMAIN:-localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

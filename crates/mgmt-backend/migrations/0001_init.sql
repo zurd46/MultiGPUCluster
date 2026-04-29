@@ -1,6 +1,17 @@
 -- Phase 1: initial schema
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Cluster-internal CA materials. Single row (id=1) for the active CA.
+-- For higher security in production these should live in an HSM/KMS;
+-- this table is the bootstrap path.
+CREATE TABLE IF NOT EXISTS ca_state (
+    id           INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    common_name  TEXT NOT NULL,
+    cert_pem     TEXT NOT NULL,
+    key_pem      TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email           TEXT UNIQUE NOT NULL,
@@ -24,13 +35,17 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 CREATE TABLE IF NOT EXISTS enroll_tokens (
     id              UUID PRIMARY KEY,
-    token_hash      TEXT NOT NULL,
+    token_hash      TEXT NOT NULL UNIQUE,
     requested_by    UUID REFERENCES users(id),
     display_hint    TEXT,
     expires_at      TIMESTAMPTZ NOT NULL,
     used_at         TIMESTAMPTZ,
+    used_by_node    UUID,
+    used_from_ip    INET,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_enroll_tokens_hash ON enroll_tokens(token_hash);
 
 CREATE TABLE IF NOT EXISTS nodes (
     id                       UUID PRIMARY KEY,
