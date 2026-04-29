@@ -1,0 +1,42 @@
+{
+    email admin@example.com
+    servers {
+        protocols h1 h2 h3
+    }
+}
+
+{$BACKEND_DOMAIN:cluster.example.com} {
+    encode gzip zstd
+
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options    "nosniff"
+        X-Frame-Options           "DENY"
+        Referrer-Policy           "no-referrer"
+        Permissions-Policy        "geolocation=(), microphone=(), camera=()"
+    }
+
+    @cluster path /cluster/*
+    handle @cluster {
+        reverse_proxy gateway:8443
+    }
+
+    @api path /api/*
+    handle @api {
+        reverse_proxy gateway:8443
+    }
+
+    @openai path /v1/*
+    handle @openai {
+        reverse_proxy gateway:8443
+    }
+
+    @enroll path /enroll
+    handle @enroll {
+        reverse_proxy gateway:8443
+    }
+
+    handle /* {
+        reverse_proxy gateway:8443
+    }
+}

@@ -1,0 +1,122 @@
+version: "3.9"
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [gateway]
+
+  gateway:
+    image: gpucluster/gateway:0.1.0
+    build:
+      context: ..
+      dockerfile: docker/gateway.Dockerfile
+    restart: unless-stopped
+    environment:
+      RUST_LOG: info
+      GATEWAY_BIND: 0.0.0.0:8443
+      MGMT_BACKEND_URL: http://mgmt:7100
+      COORDINATOR_URL: http://coordinator:7000
+      OPENAI_API_URL: http://openai-api:7200
+    expose: ["8443"]
+    depends_on: [mgmt, coordinator, openai-api]
+
+  coordinator:
+    image: gpucluster/coordinator:0.1.0
+    build:
+      context: ..
+      dockerfile: docker/coordinator.Dockerfile
+    restart: unless-stopped
+    environment:
+      RUST_LOG: info
+      DATABASE_URL: postgres://gpucluster:${POSTGRES_PASSWORD}@postgres:5432/gpucluster
+      COORD_GRPC_BIND: 0.0.0.0:7000
+      COORD_HTTP_BIND: 0.0.0.0:7001
+    expose: ["7000", "7001"]
+    depends_on: [postgres]
+
+  mgmt:
+    image: gpucluster/mgmt:0.1.0
+    build:
+      context: ..
+      dockerfile: docker/mgmt.Dockerfile
+    restart: unless-stopped
+    environment:
+      RUST_LOG: info
+      DATABASE_URL: postgres://gpucluster:${POSTGRES_PASSWORD}@postgres:5432/gpucluster
+      JWT_SECRET: ${JWT_SECRET}
+      MGMT_BIND: 0.0.0.0:7100
+    expose: ["7100"]
+    depends_on: [postgres, redis]
+
+  openai-api:
+    image: gpucluster/openai-api:0.1.0
+    build:
+      context: ..
+      dockerfile: docker/openai-api.Dockerfile
+    restart: unless-stopped
+    environment:
+      RUST_LOG: info
+      OPENAI_API_BIND: 0.0.0.0:7200
+      COORDINATOR_URL: http://coordinator:7000
+    expose: ["7200"]
+    depends_on: [coordinator]
+
+  wg-hub:
+    image: headscale/headscale:latest
+    restart: unless-stopped
+    command: headscale serve
+    volumes:
+      - ./wg-hub/config:/etc/headscale
+      - wg-hub-data:/var/lib/headscale
+    ports:
+      - "8080:8080"   # admin
+      - "9090:9090"   # metrics
+      - "41641:41641/udp"
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gpucluster
+      POSTGRES_USER: gpucluster
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gpucluster"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    expose: ["9000", "9001"]
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  redis-data:
+  minio-data:
+  wg-hub-data:

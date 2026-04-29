@@ -1,0 +1,19 @@
+[package]
+name = "gpucluster-nccl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+# bindgen would be added here once linking against libnccl.
+# For now this crate is a placeholder so the workspace compiles
+# without requiring CUDA/NCCL on dev machines.
+
+[features]
+default = []
+nccl = []   # enable when linking against real libnccl

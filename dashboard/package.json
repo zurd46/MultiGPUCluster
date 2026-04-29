@@ -1,0 +1,11 @@
+{
+  "name": "gpucluster-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Phase 5 placeholder — SvelteKit/Next.js dashboard scaffold pending",
+  "scripts": {
+    "dev": "echo 'Phase 5: scaffold a SvelteKit or Next.js app here'",
+    "build": "echo 'no-op until phase 5'"
+  }
+}

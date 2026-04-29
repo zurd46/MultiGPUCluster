@@ -1,0 +1,32 @@
+[package]
+name = "gpucluster-openai-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "gpucluster-openai-api"
+path = "src/main.rs"
+
+[dependencies]
+gpucluster-common.workspace = true
+gpucluster-proto.workspace = true
+
+tokio.workspace = true
+tokio-stream.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+hyper.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+clap.workspace = true
+dotenvy.workspace = true
+
+reqwest.workspace = true
+uuid.workspace = true
