@@ -7,20 +7,21 @@
 [![Rust](https://img.shields.io/badge/rust-1.88-orange.svg)](https://www.rust-lang.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-12.8-green.svg)](https://developer.nvidia.com/cuda-toolkit)
 
-MultiGPUCluster pools NVIDIA GPUs from machines at different locations into a single logical compute fabric. It speaks the OpenAI API so tools like **LM Studio** can use it as a drop-in inference backend, and runs distributed fine-tuning jobs across the same fleet.
+MultiGPUCluster pools GPUs from machines at different locations into a single logical compute fabric. It speaks the OpenAI API so tools like **LM Studio** can use it as a drop-in inference backend, and runs distributed fine-tuning jobs across the same fleet.
 
-The system is designed for **mixed hardware** (RTX 5060 Ti + RTX 4090 + RTX 3090 in one cluster) and **public-internet deployment** — workers register over the internet through an encrypted WireGuard mesh and connect through a hardened gateway.
+The system is designed for **mixed hardware** — NVIDIA GPUs (RTX 5060 Ti + RTX 4090 + RTX 3090) **and Apple Silicon Macs (M1 → M4, Pro/Max/Ultra)** in the same cluster — and **public-internet deployment**: workers register over the internet through an encrypted WireGuard mesh and connect through a hardened gateway.
 
 ---
 
 ## Highlights
 
 - **Heterogeneous-first scheduling** — VRAM-weighted layer placement, compute-group partitioning, mixed-precision aware (BF16 / FP8 / FP4).
+- **Cross-vendor backends** — NVIDIA (CUDA / NCCL) **and Apple Silicon (Metal, unified memory)** in the same cluster. Mac workers run natively, Linux/Windows workers run in CUDA containers; the scheduler keeps them in separate compute groups for TP and stitches them together with pipeline parallelism for inference.
 - **WAN-ready** — WireGuard overlay (Headscale) handles NAT traversal, dynamic IPs, and end-to-end encryption.
 - **Auto-enrollment** — one-time token + mTLS cert issuance; workers reconnect automatically through reboots, ISP IP changes, and backend maintenance.
 - **Zero-trust gateway** — TLS 1.3, mTLS for nodes, RBAC, rate limiting, immutable audit log, anomaly detection.
 - **LM Studio compatible** — exposes `/v1/chat/completions` and `/v1/models` via an OpenAI-compatible layer.
-- **Backend = system image, clients = containers** — a single `docker compose up` brings up the entire control plane.
+- **Backend = system image, clients = containers or native binary** — a single `docker compose up` brings up the entire control plane; macOS workers ship as a native `.pkg`.
 
 ---
 
@@ -44,15 +45,15 @@ The system is designed for **mixed hardware** (RTX 5060 Ti + RTX 4090 + RTX 3090
 │  └───────────────────────────────────────────┘            │
 └───────────────────────────┬───────────────────────────────┘
                             │ WireGuard mesh
-       ┌────────────────────┼─────────────────────┐
-       ▼                    ▼                     ▼
-   Site A: Win11+WSL2    Site B: Linux        Site C: Linux
-   ┌─────────────┐       ┌──────────┐         ┌──────────┐
-   │ Bootstrapper│       │Bootstrap.│         │Bootstrap.│
-   │      ↓      │       │    ↓     │         │    ↓     │
-   │Worker (CUDA)│       │Worker    │         │Worker    │
-   │  RTX 5060Ti │       │ 2× 4090  │         │ RTX 3090 │
-   └─────────────┘       └──────────┘         └──────────┘
+       ┌────────────────────┼──────────────────────┬────────────────┐
+       ▼                    ▼                      ▼                ▼
+   Site A: Win11+WSL2    Site B: Linux         Site C: Linux    Site D: macOS
+   ┌─────────────┐       ┌──────────┐          ┌──────────┐    ┌──────────────┐
+   │ Bootstrapper│       │Bootstrap.│          │Bootstrap.│    │ Bootstrapper │
+   │      ↓      │       │    ↓     │          │    ↓     │    │      ↓       │
+   │Worker (CUDA)│       │Worker    │          │Worker    │    │Worker (Metal)│
+   │  RTX 5060Ti │       │ 2× 4090  │          │ RTX 3090 │    │  M3 Max 64GB │
+   └─────────────┘       └──────────┘          └──────────┘    └──────────────┘
 ```
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full architecture document, including scheduler internals, security model, and phase-by-phase roadmap.
@@ -63,13 +64,13 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full architecture document, including
 
 ### Inference
 - OpenAI-compatible HTTP API (`/v1/chat/completions`, `/v1/models`)
-- Distributed inference via an extended fork of `llama.cpp`'s RPC backend
+- Distributed inference via an extended fork of `llama.cpp`'s RPC backend (`rpc-server-ext`, builds with either ggml-cuda or ggml-metal)
 - Pipeline parallelism across WAN, tensor parallelism within latency islands
-- Heterogeneous GPUs handled natively (5060 Ti + 4090 + 3090 → one model)
+- Heterogeneous GPUs handled natively (5060 Ti + 4090 + 3090 + Apple M3 Max → one model)
 
 ### Fine-tuning
 - LoRA / QLoRA over `candle` (Rust) — no Python required for the common path
-- DDP + FSDP via NCCL for larger jobs
+- DDP + FSDP via NCCL for larger jobs (NVIDIA-only — Metal lacks a cross-node collective today; Apple workers stay inference-only until Phase 6)
 - Geo-aware data placement (datasets can be pinned to specific regions)
 
 ### Cluster management
@@ -94,7 +95,8 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full architecture document, including
 
 ### Prerequisites
 - **Backend host:** Linux VPS or cloud VM, Docker + Docker Compose, public domain with DNS pointing to it.
-- **Worker host:** Linux (native) or Windows 11 with WSL2 + Docker Desktop, NVIDIA driver ≥ 535 (≥ 555 for Blackwell / RTX 50-series), NVIDIA Container Toolkit.
+- **NVIDIA worker host:** Linux (native) or Windows 11 with WSL2 + Docker Desktop, NVIDIA driver ≥ 535 (≥ 555 for Blackwell / RTX 50-series), NVIDIA Container Toolkit.
+- **Apple Silicon worker host:** macOS 14 (Sonoma) or newer on M1/M2/M3/M4 (any variant). No Docker required — the worker runs as a native `launchd` daemon. Intel Macs are not supported.
 
 ### 1. Deploy the backend
 

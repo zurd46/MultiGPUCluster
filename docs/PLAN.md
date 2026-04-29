@@ -799,6 +799,67 @@ NCCL_IB_DISABLE=1       # keine InfiniBand verfügbar
 
 Auto-Tuning per Cluster beim Bootstrap.
 
+### 10.7 Apple Silicon (Metal) als first-class Backend
+
+Apple-Silicon-Macs können dem Cluster genauso beitreten wie NVIDIA-Hosts. Der Worker erkennt am Plattform-Cfg, ob er CUDA oder Metal startet, der Scheduler hält beide Backends sauber auseinander.
+
+**Detection (`crates/sysinfo/src/gpu_metal.rs`):**
+
+```
+sysctl hw.optional.arm64                  → ist es überhaupt AS?
+sysctl hw.memsize                         → unified memory budget
+sysctl machdep.cpu.brand_string           → Chip-Name ("Apple M3 Max")
+system_profiler SPDisplaysDataType -json  → GPU-Cores, Display-Info
+
+→ pb::GpuInfo {
+     architecture:    "Apple-M3-Max",
+     backend:         METAL,
+     unified_memory:  true,
+     gpu_core_count:  40,
+     vram_total:      128 GB (== system RAM),
+     metal_family:    "Metal4",
+   }
+```
+
+**Kapabilitäten pro Generation:**
+
+| Family    | FP16 | BF16 (HW) | FP8 | FP4 | Bandwidth (GB/s, Max-Variante) |
+|-----------|------|-----------|-----|-----|--------------------------------|
+| M1 / M2   | ✓    | emuliert  | ✗   | ✗   | 200 / 200                      |
+| M3        | ✓    | ✓         | ✗   | ✗   | 300                            |
+| M4        | ✓    | ✓         | ✗   | ✗   | 546                            |
+
+→ Default-Cluster-Präzision **BF16** ist ab M3 nativ; M1/M2-Hosts werden bei BF16-Jobs vom `placement.rs`-Filter übersprungen, ohne dass der Job scheitert.
+
+**Compute-Group-Bucketing:**
+
+```rust
+// crates/scheduler/src/compute_group.rs
+match backend {
+    METAL => format!("metal-{}",         g.architecture),  // "metal-Apple-M3-Max"
+    CUDA  => format!("cuda-{}-{}.{}", arch, ccm, ccmin),    // "cuda-Ampere-8.0"
+    ...
+}
+```
+
+→ TP läuft nur innerhalb gleicher Family (kein TP zwischen M3 Max und 4090). PP über Family-Grenzen hinweg ist erlaubt — der Wire-Format ist BF16, das beide Backends akzeptieren.
+
+**Beispielhafter Mixed-Pipeline-Plan (70B-Modell, BF16):**
+
+```
+Stage 0:  M3 Max (64 GB unified) → ~24 layers (über WAN ↓)
+Stage 1:  RTX 4090 (24 GB)       → ~26 layers (Office-DE)
+Stage 2:  RTX 3090 (24 GB)       → ~26 layers (Office-DE)
+```
+
+**Inference-RPC (`cpp/llama-rpc-ext`):** Eine CMake-Option (`BUILD_BACKEND_METAL`/`BUILD_BACKEND_CUDA`) wählt den Backend, der in `rpc-server-ext` einkompiliert wird. Auf macOS produziert der Build ein universal-Binary mit ggml-metal; auf Linux mit ggml-cuda. Der Worker startet den Server beim Boot anhand des erkannten GPU-Backends auf Port 50052.
+
+**Was Apple Silicon (noch) nicht kann:**
+
+- **Fine-Tuning über mehrere Hosts:** NCCL hat kein Metal-Pendant. `candle` hat lokalen Metal-Support, aber für Multi-Node-DDP/FSDP fehlt der Collective-Communication-Layer. → Phase 4 ist initial **NVIDIA-only**, Phase 6 nimmt Metal-Fine-Tuning auf, sobald `candle` (oder MPS) eine Cross-Node-AllReduce hat.
+- **FP8/FP4-Inferenz:** Apples Metal hat dafür keine Hardware-Pfade. → Scheduler filtert Metal-GPUs bei FP8-Jobs automatisch raus.
+- **NVLink-/GPUDirect-Pendant:** Apple Silicon hat keine Multi-GPU-Boxes; jeder Mac trägt genau einen GPU-Block bei.
+
 ---
 
 ## 11. Docker / Image-Strategie
@@ -940,15 +1001,15 @@ Install-Flow (User-Sicht):
 - [ ] Lokale Container-Registry (oder GHCR)
 
 ### Phase 1 — Identity & Cluster-Fundament (3 Wochen)
-- [ ] gRPC-Protokoll (tonic + protobuf): `NodeInfo`, `NetworkInfo`, `GpuCapabilityProfile`
-- [ ] `crates/sysinfo`: NVML + OS-Detection (Win/Linux)
+- [ ] gRPC-Protokoll (tonic + protobuf): `NodeInfo`, `NetworkInfo`, `GpuCapabilityProfile`, `GpuBackend`
+- [ ] `crates/sysinfo`: NVML + OS-Detection (Win/Linux) **+ Metal-Detection (macOS via `system_profiler`/`sysctl`)**
 - [ ] Mgmt-Backend: Users, RBAC, API-Keys, Audit-Log (Postgres)
 - [ ] Gateway: TLS 1.3, mTLS für Worker, JWT/OAuth für Web-UI
 - [ ] Interne CA + Cert-Mgmt
 - [ ] **Auto-Enrollment-Flow** (Token-Generation, Verify, Cert-Issue)
 - [ ] WireGuard-Hub (Headscale integriert)
-- [ ] Bootstrapper: enroll → wg-up → worker-start
-- [ ] **Bootstrapper als systemd / Windows Service**
+- [ ] Bootstrapper: enroll → wg-up → worker-start (Container *oder* native auf macOS)
+- [ ] **Bootstrapper als systemd / Windows Service / launchd-Daemon**
 - [ ] **Persistente Auto-Reconnect-Connection** (Backoff, Watchdog)
 - [ ] **WAN-IP-Tracking** (TLS-Socket-basiert, GeoIP-Lookup, History-Tabelle)
 - [ ] Coordinator: Heartbeats, Node-Liste, Quarantäne bei Driver-Mismatch
@@ -956,8 +1017,8 @@ Install-Flow (User-Sicht):
 - [ ] Capability-Profil-Erfassung + Bench-on-Join
 
 ### Phase 2 — Distributed Inference über WAN (4 Wochen)
-- [ ] llama.cpp Submodule + RPC-Hooks
-- [ ] Worker startet/managed lokalen `rpc-server`
+- [ ] llama.cpp Submodule + RPC-Hooks (CMake-Switches `BUILD_BACKEND_CUDA` / `BUILD_BACKEND_METAL`)
+- [ ] Worker startet/managed lokalen `rpc-server-ext` (CUDA *oder* Metal — Auto-Select aus GPU-Inventar)
 - [ ] Latenz-Insel-Detection (RTT-Matrix zwischen Workern)
 - [ ] **Heterogenitätsbewusster** Layer-Allocation-Solver (Greedy)
 - [ ] Compute-Group-Partitionierung (TP nur homogen)
@@ -973,22 +1034,28 @@ Install-Flow (User-Sicht):
 - [ ] Alerting (Webhook/Slack)
 - [ ] Anomaly-Detection im Gateway
 
-### Phase 4 — Fine-Tuning (4-5 Wochen)
+### Phase 4 — Fine-Tuning, NVIDIA-only (4-5 Wochen)
 - [ ] LoRA/QLoRA über `candle` (Rust) ODER PyTorch-Bridge
-- [ ] DDP via NCCL-Wrapper
+- [ ] DDP via NCCL-Wrapper (NVIDIA-only — Metal hat kein Cross-Node-Collectives-Pendant)
 - [ ] FSDP für >Single-Node-Modelle
 - [ ] Checkpoint-Sync, Output-Adapter-Mgmt
 - [ ] Job-Spec YAML/TOML
 - [ ] Dataset-Registry mit Privacy-Tags
+- [ ] Scheduler filtert Metal-Nodes bei `job.type == fine_tune` automatisch raus
 
 ### Phase 5 — Production-UI & Hardening (3-4 Wochen)
 - [ ] Web-Dashboard (SvelteKit / Next.js)
 - [ ] Live-Topologie, Job-Monitor, Logs
 - [ ] Audit-Log-Viewer
 - [ ] Helm-Chart für Backend-Deploy
-- [ ] Auto-Updater für Worker-Image
+- [ ] Auto-Updater für Worker-Image (Linux/Win) + Sparkle-Style-Update für Mac-`.pkg`
 - [ ] Penetration-Test des Gateways
 - [ ] Backup/Restore, DR-Runbook
+
+### Phase 6 — Metal Fine-Tuning (offen, ~3-4 Wochen)
+- [ ] `candle` Metal-Backend für lokale LoRA-Trainings (Single-Node)
+- [ ] Cross-Node-Gradient-Sync über eigenes UDP-AllReduce über WireGuard (NCCL-Ersatz)
+- [ ] Fine-Tuning-Job mit gemischten Backends → Pipeline-Parallel statt DDP
 
 ---
 
@@ -1041,6 +1108,7 @@ MultiGPUCluster/
 | **CUDA** | RTX 5060 Ti = Blackwell (sm_120) → CUDA 12.8+. |
 | **Treiber-Drift** | Coordinator quarantiert inkompatible Nodes automatisch. |
 | **Windows-Hosts** | WSL2 mit `networkingMode=mirrored` zwingend. |
+| **Apple-Silicon-Hosts** | macOS 14+ (Sonoma), Apple M1 oder neuer. Worker läuft nativ als launchd-Daemon (`com.gpucluster.agent`); kein Docker nötig. Intel-Macs werden nicht unterstützt. |
 | **Secrets** | Backend nutzt `age`/`sops` o. Vault für Secrets-at-Rest. |
 | **Backups** | Postgres + MinIO regelmäßig snapshotten (Daily off-site). |
 
