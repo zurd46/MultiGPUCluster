@@ -60,6 +60,10 @@ pub async fn run(cfg: MgmtConfig) -> Result<()> {
         .route("/api/v1/models",                   get(models::list).post(models::create))
         .route("/api/v1/models/{id}",
                patch(models::update).delete(models::delete))
+        // Trigger an HF download + llama-server restart on the chosen worker.
+        // Async: the worker downloads in the background and reports the new
+        // status on its next heartbeat.
+        .route("/api/v1/models/{id}/load",         post(models::load))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_admin));
 
     let app = public.merge(admin).with_state(state);

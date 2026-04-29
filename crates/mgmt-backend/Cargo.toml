@@ -38,3 +38,6 @@ ed25519-dalek.workspace = true
 base64.workspace = true
 ring.workspace = true
 rcgen.workspace = true
+
+# Used by /api/v1/models/{id}/load to call the coordinator's control proxy.
+reqwest.workspace = true
