@@ -22,7 +22,7 @@ The system is designed for **mixed hardware** — NVIDIA GPUs (RTX 5060 Ti + RTX
 - **Zero-trust gateway** — TLS 1.3, mTLS for nodes, RBAC, rate limiting, immutable audit log, anomaly detection.
 - **LM Studio compatible** — exposes `/v1/chat/completions` and `/v1/models` via an OpenAI-compatible layer.
 - **Backend = system image, clients = containers or native binary** — a single `docker compose up` brings up the entire control plane; macOS workers ship as a native `.pkg`.
-- **One URL for everything** — Caddy → Gateway fans out `/api/*` (mgmt), `/cluster/*` (coordinator), `/v1/*` (openai-api), `/enroll` (worker enrollment). A built-in **Cluster Management UI** on `/` aggregates all services live (KPI tiles, node-status donut, searchable tables, auto-refresh every 5 s); `/overview` returns the same data as JSON.
+- **One URL for everything** — Caddy → Gateway fans out `/api/*` (mgmt), `/cluster/*` (coordinator), `/v1/*` (openai-api), `/enroll` (worker enrollment). A built-in **Cluster Management UI** on `/` provides a sidebar-navigated admin (Overview · Nodes · Models · API keys · Inference log · Settings), with auto-refresh every 5 s and modal dialogs for destructive actions; `/overview` returns the same aggregated data as JSON.
 - **OpenAI-compatible URL with API keys** — `/v1/*` is bearer-protected. Customer keys (`mgc_*`) are minted in the admin UI, validated by the gateway against the mgmt-backend (Argon2id), and cached for 60 s to keep the verify hop off the hot path.
 - **Live-editable backend config** — public base URL, default model, rate limits, **and the model registry that feeds `/v1/models`** are managed directly in the admin UI; node `pending_approval` / approve / drain / revoke actions ship in the same page.
 
@@ -135,13 +135,23 @@ open http://localhost:8443/
 curl http://localhost:8443/overview
 ```
 
-The admin page on `/` shows live service health, the coordinator's node registry, the mgmt-backend's enrolled nodes, and the OpenAI-API model list — auto-refreshes every 5 s. To see admin-protected mgmt data (`/api/v1/nodes`), paste your `ADMIN_API_KEY` into the field at the top of the page.
+The admin page on `/` is split into six tabs you reach from the left-hand sidebar:
+
+- **Overview** — KPI tiles, service-health probes, node-status donut, raw `/overview` JSON, and a "Quick start" banner that disappears once you have a key, a model, and a node.
+- **Nodes** — live heartbeats from the coordinator + the admin-managed registry from mgmt, with approve / drain / revoke actions on each registry row.
+- **Models** — registry that powers `/v1/models`. Fold-out form to add an entry, per-row Load / Disable / Set-default / Delete actions. The "Load" action opens a modal picker that lists workers with a registered control endpoint.
+- **API keys** — fold-out form to mint a key, plus per-row Edit / Revoke / Delete (modal-confirmed). Revealed-once tokens get a copy-button banner.
+- **Inference log** — recent `/v1/chat/completions` calls with status / model / node / tokens / latency filters.
+- **Settings** — public base URL, default model, rate-limit, max-tokens default, and the (admin-only) HuggingFace API token; emits a ready-to-paste LM Studio / curl snippet.
+
+The admin key lives in the sidebar and is stored in `localStorage`. Without it the admin tabs show "enter admin key in the sidebar" instead of guessing or 401-failing silently. UI assets are served as static routes (`/admin.css`, `/admin.js`) baked into the gateway binary at compile time — no separate static dir.
 
 #### Routes exposed under the one URL
 
 | Path | Upstream | Purpose | Auth |
 |---|---|---|---|
-| `/` | gateway | Cluster Management UI | none (admin key entered in UI) |
+| `/` | gateway | Cluster Management UI (sidebar + tabs) | none (admin key entered in sidebar) |
+| `/admin.css`, `/admin.js` | gateway | Static UI assets (baked into the binary) | none |
 | `/overview` | gateway | JSON aggregator (services + nodes + models) | optional admin |
 | `/health`, `/ready` | gateway | Liveness / readiness | none |
 | `/api/v1/nodes`, `/api/v1/audit`, `/api/v1/enroll/tokens` | mgmt | Node + audit + enrollment-token admin | `Authorization: Bearer ADMIN_API_KEY` |
