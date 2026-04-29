@@ -62,6 +62,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       MGMT_BIND: 0.0.0.0:7100
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+      # Reach the coordinator over the private compose network — going via
+      # localhost/Caddy from inside the mgmt container would loop back.
+      COORDINATOR_ENDPOINT: http://coordinator:7001
     expose: ["7100"]
     depends_on: [postgres, redis]
 

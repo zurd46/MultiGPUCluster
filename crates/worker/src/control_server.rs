@@ -88,10 +88,25 @@ pub fn spawn(port: u16, sup: SharedSupervisor, data_dir: &str) -> Option<JoinHan
     Some(handle)
 }
 
-/// Endpoint port for the heartbeat to advertise. The IP is filled in by
-/// the coordinator from the socket address (same dance as inference).
+/// Endpoint for the heartbeat to advertise. By default the IP is filled in
+/// by the coordinator from the socket address. When `CONTROL_ADVERTISED_HOST`
+/// (or `INFERENCE_ADVERTISED_HOST` as a fallback — they always point at the
+/// same machine) is set, the worker advertises `<host>:<port>` directly so
+/// the coordinator passes it through unchanged. This is the escape hatch for
+/// Mac dev: Docker bridge gateway → use `host.docker.internal`.
 pub fn endpoint_advertise(port: u16) -> String {
-    format!(":{port}")
+    let host_override = std::env::var("CONTROL_ADVERTISED_HOST")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("INFERENCE_ADVERTISED_HOST")
+                .ok()
+                .filter(|s| !s.is_empty())
+        });
+    match host_override {
+        Some(h) => format!("{h}:{port}"),
+        None => format!(":{port}"),
+    }
 }
 
 async fn load_model(

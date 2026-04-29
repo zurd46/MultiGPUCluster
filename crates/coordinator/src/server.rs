@@ -239,18 +239,10 @@ async fn load_model_proxy(
             Json(json!({ "error": "unknown_node", "node_id": id.clone() })))
     })?;
 
-    // Same IP-pairing rules as inference_url: prefer wg_ip, fall back to the
-    // socket-observed public_ip. control_endpoint carries `:port`.
-    let wg_ip = entry
-        .info
-        .network
-        .as_ref()
-        .map(|n| n.wg_ip.clone())
-        .filter(|s| !s.is_empty());
-    let host = wg_ip.or(entry.current_public_ip.clone()).ok_or_else(|| {
-        (StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": "node_has_no_routable_ip", "node_id": id.clone() })))
-    })?;
+    // control_endpoint can be either `":port"` (port-only — pair with the
+    // observed dispatch IP) or `"host:port"` (already complete, typical for
+    // `CONTROL_ADVERTISED_HOST=host.docker.internal`). Same dance as
+    // inference_url in eligible_nodes.
     let port_part = entry.control_endpoint.clone().ok_or_else(|| {
         (StatusCode::BAD_GATEWAY,
             Json(json!({
@@ -259,7 +251,21 @@ async fn load_model_proxy(
                 "hint":    "worker may be running an older version that doesn't expose /control",
             })))
     })?;
-    let url = format!("http://{host}{port_part}/control/load_model");
+    let url = if port_part.starts_with(':') {
+        let wg_ip = entry
+            .info
+            .network
+            .as_ref()
+            .map(|n| n.wg_ip.clone())
+            .filter(|s| !s.is_empty());
+        let host = wg_ip.or(entry.current_public_ip.clone()).ok_or_else(|| {
+            (StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "node_has_no_routable_ip", "node_id": id.clone() })))
+        })?;
+        format!("http://{host}{port_part}/control/load_model")
+    } else {
+        format!("http://{port_part}/control/load_model")
+    };
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
