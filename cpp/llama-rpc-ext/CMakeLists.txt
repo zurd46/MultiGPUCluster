@@ -54,9 +54,13 @@ if(BUILD_RPC_SERVER)
         # Force upstream to also build its own `rpc-server` (tools/rpc) which we
         # use as the bringup binary for Phase 2. Our `rpc-server-ext` is a
         # cluster-aware wrapper that wraps/extends it.
-        set(LLAMA_BUILD_TOOLS ON CACHE BOOL "" FORCE)
+        # Upstream gates `add_subdirectory(tools)` on COMMON *and* TOOLS — we
+        # have to enable both, plus disable the noisy ones.
+        set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
+        set(LLAMA_BUILD_TOOLS  ON CACHE BOOL "" FORCE)
         set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
         set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
         add_subdirectory(${SUBMODULE_DIR} llama_cpp_build)
     endif()
 
