@@ -27,7 +27,7 @@ pub fn cpu_mem() -> pb::CpuMemInfo {
 
     let cpu_model = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
     let cpu_threads = sys.cpus().len() as u32;
-    let cpu_cores = num_physical_cores().unwrap_or(cpu_threads);
+    let cpu_cores = sys.physical_core_count().map(|v| v as u32).unwrap_or(cpu_threads);
 
     pb::CpuMemInfo {
         cpu_model,
@@ -36,8 +36,4 @@ pub fn cpu_mem() -> pb::CpuMemInfo {
         ram_total_bytes: sys.total_memory(),
         ram_free_bytes:  sys.available_memory(),
     }
-}
-
-fn num_physical_cores() -> Option<u32> {
-    sysinfo::System::physical_core_count().map(|v| v as u32)
 }

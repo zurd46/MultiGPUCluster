@@ -29,6 +29,26 @@ pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Resu
     let info = gpucluster_sysinfo::collect()?;
     let (priv_b64, pub_b64) = generate_ed25519_keypair()?;
 
+    let os_json = info.os.as_ref().map(|o| serde_json::json!({
+        "family":  o.family,
+        "version": o.version,
+        "kernel":  o.kernel,
+        "arch":    o.arch,
+    })).unwrap_or(serde_json::Value::Null);
+
+    let gpus_json: serde_json::Value = info.gpus.iter().map(|g| serde_json::json!({
+        "index":             g.index,
+        "uuid":              g.uuid,
+        "name":              g.name,
+        "architecture":      g.architecture,
+        "compute_cap_major": g.compute_cap_major,
+        "compute_cap_minor": g.compute_cap_minor,
+        "vram_total_bytes":  g.vram_total_bytes,
+        "driver_version":    g.driver_version,
+        "cuda_version":      g.cuda_version,
+        "vbios_version":     g.vbios_version,
+    })).collect::<Vec<_>>().into();
+
     let payload = EnrollPayload {
         token,
         pubkey_b64: pub_b64,
@@ -36,8 +56,8 @@ pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Resu
         hostname: info.hostname.clone(),
         display_name,
         agent_version: env!("CARGO_PKG_VERSION"),
-        os: serde_json::to_value(&info.os).unwrap_or_default(),
-        gpus: serde_json::to_value(&info.gpus).unwrap_or_default(),
+        os: os_json,
+        gpus: gpus_json,
     };
 
     let url = format!("{}/enroll", backend.trim_end_matches('/'));
