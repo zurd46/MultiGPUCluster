@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use gpucluster_sysinfo::inventory;
 use serde::{Deserialize, Serialize};
 
 use crate::state;
@@ -7,12 +8,11 @@ use crate::state;
 struct EnrollPayload<'a> {
     token: &'a str,
     pubkey_b64: String,
-    hw_fingerprint: String,
-    hostname: String,
     display_name: Option<&'a str>,
-    agent_version: &'a str,
-    os: serde_json::Value,
-    gpus: serde_json::Value,
+    /// Full inventory snapshot — same JSON the worker keeps uploading via
+    /// /cluster/nodes/report after enrollment. The mgmt-backend persists it
+    /// once on enroll-ack and the coordinator keeps it fresh.
+    node: serde_json::Value,
 }
 
 #[derive(Deserialize)]
@@ -26,45 +26,24 @@ struct EnrollResponse {
 }
 
 pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Result<()> {
-    let info = gpucluster_sysinfo::collect()?;
+    let mut info = gpucluster_sysinfo::collect()?;
+    if let Some(name) = display_name {
+        info.display_name = name.to_string();
+    }
     let (priv_b64, pub_b64) = generate_ed25519_keypair()?;
 
-    let os_json = info.os.as_ref().map(|o| serde_json::json!({
-        "family":  o.family,
-        "version": o.version,
-        "kernel":  o.kernel,
-        "arch":    o.arch,
-    })).unwrap_or(serde_json::Value::Null);
-
-    let gpus_json: serde_json::Value = info.gpus.iter().map(|g| serde_json::json!({
-        "index":             g.index,
-        "uuid":              g.uuid,
-        "name":              g.name,
-        "architecture":      g.architecture,
-        "compute_cap_major": g.compute_cap_major,
-        "compute_cap_minor": g.compute_cap_minor,
-        "vram_total_bytes":  g.vram_total_bytes,
-        "driver_version":    g.driver_version,
-        "cuda_version":      g.cuda_version,
-        "vbios_version":     g.vbios_version,
-        // Cross-vendor fields — let the backend distinguish CUDA workers from
-        // Apple Silicon (Metal) workers without having to infer it from the
-        // architecture string.
-        "backend":           backend_label(g.backend),
-        "unified_memory":    g.unified_memory,
-        "gpu_core_count":    g.gpu_core_count,
-        "metal_family":      g.metal_family,
-    })).collect::<Vec<_>>().into();
+    // Show the operator exactly what we're about to ship — easier to spot a
+    // missing GPU / wrong device name *before* the cert gets issued.
+    println!("Submitting the following inventory to {backend}:");
+    println!();
+    print!("{}", inventory::format_human(&info));
+    println!();
 
     let payload = EnrollPayload {
         token,
         pubkey_b64: pub_b64,
-        hw_fingerprint: info.hw_fingerprint.clone(),
-        hostname: info.hostname.clone(),
         display_name,
-        agent_version: env!("CARGO_PKG_VERSION"),
-        os: os_json,
-        gpus: gpus_json,
+        node: inventory::to_json(&info),
     };
 
     let url = format!("{}/enroll", backend.trim_end_matches('/'));
@@ -77,7 +56,7 @@ pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Resu
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("enroll failed: {} {}", status, body);
+        anyhow::bail!("enroll failed: {status} {body}");
     }
 
     let resp: EnrollResponse = resp.json().await.context("parse enroll response")?;
@@ -93,17 +72,6 @@ pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Resu
 
     tracing::info!("enrollment successful — identity persisted");
     Ok(())
-}
-
-fn backend_label(backend: i32) -> &'static str {
-    use gpucluster_proto::node as pb;
-    match pb::GpuBackend::try_from(backend).unwrap_or(pb::GpuBackend::Unspecified) {
-        pb::GpuBackend::Cuda    => "cuda",
-        pb::GpuBackend::Metal   => "metal",
-        pb::GpuBackend::Rocm    => "rocm",
-        pb::GpuBackend::Vulkan  => "vulkan",
-        pb::GpuBackend::Unspecified => "unspecified",
-    }
 }
 
 /// Generates a fresh Ed25519 keypair using the system RNG (via ring).

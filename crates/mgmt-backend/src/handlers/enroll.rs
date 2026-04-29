@@ -19,20 +19,25 @@ use crate::{api_error::{ApiError, ApiResult}, ca_store, state::AppState};
 
 const NODE_CERT_VALID_DAYS: u32 = 7;
 
+/// New worker payload: token + pubkey + the same `NodeInfo` JSON the worker
+/// will keep heartbeating after enrollment. Keeping the inventory shape
+/// identical to the heartbeat means the dashboard / DB sees one schema, and
+/// enrollment isn't a special-case data path.
 #[derive(Debug, Deserialize)]
 pub struct EnrollRequest {
     pub token: String,
     pub pubkey_b64: String,
-    pub hw_fingerprint: String,
-    pub hostname: String,
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Full `NodeInfo` JSON as produced by `gpucluster_sysinfo::inventory::to_json`.
     #[serde(default)]
-    pub agent_version: Option<String>,
-    #[serde(default)]
-    pub os: serde_json::Value,
-    #[serde(default)]
-    pub gpus: serde_json::Value,
+    pub node: serde_json::Value,
+}
+
+impl EnrollRequest {
+    fn node_str(&self, key: &str) -> String {
+        self.node.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -50,8 +55,14 @@ pub async fn complete(
     headers: HeaderMap,
     Json(req): Json<EnrollRequest>,
 ) -> ApiResult<Json<EnrollResponse>> {
-    if req.token.is_empty() || req.hw_fingerprint.is_empty() || req.pubkey_b64.is_empty() {
-        return Err(ApiError::BadRequest("token, pubkey_b64, hw_fingerprint required".into()));
+    let hw_fingerprint = req.node_str("hw_fingerprint");
+    let hostname       = req.node_str("hostname");
+    let agent_version  = req.node_str("agent_version");
+    let req_display    = req.display_name.clone()
+        .or_else(|| Some(req.node_str("display_name")).filter(|s| !s.is_empty()));
+
+    if req.token.is_empty() || hw_fingerprint.is_empty() || req.pubkey_b64.is_empty() {
+        return Err(ApiError::BadRequest("token, pubkey_b64, node.hw_fingerprint required".into()));
     }
 
     // Behind a reverse proxy (Caddy → Gateway → mgmt), ConnectInfo gives us
@@ -83,7 +94,7 @@ pub async fn complete(
     //    don't create a duplicate row.  (Re-enrollment after disk loss etc.)
     let existing = sqlx::query!(
         "SELECT id FROM nodes WHERE hw_fingerprint = $1",
-        req.hw_fingerprint
+        hw_fingerprint
     )
     .fetch_optional(&s.pool)
     .await?;
@@ -119,10 +130,10 @@ pub async fn complete(
              current_public_ip_v4  = EXCLUDED.current_public_ip_v4,
              public_ip_last_changed = EXCLUDED.public_ip_last_changed",
         node_id,
-        req.hw_fingerprint,
-        req.hostname,
-        req.display_name.or(token_row.display_hint),
-        req.agent_version.clone().unwrap_or_default(),
+        hw_fingerprint,
+        hostname,
+        req_display.or(token_row.display_hint),
+        agent_version,
         sha256_pem(&issued.cert_pem),
         cert_expires,
         public_ip,
@@ -157,9 +168,17 @@ pub async fn complete(
         node_id.to_string(),
         public_ip,
         serde_json::json!({
-            "hw_fingerprint": req.hw_fingerprint,
-            "hostname": req.hostname,
-            "agent_version": req.agent_version,
+            "hw_fingerprint": hw_fingerprint,
+            "hostname": hostname,
+            "agent_version": agent_version,
+            "device_name": req.node.get("os")
+                .and_then(|o| o.get("device_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            "gpus_count": req.node.get("gpus")
+                .and_then(|g| g.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0),
         })
     )
     .execute(&mut *tx)
@@ -169,8 +188,9 @@ pub async fn complete(
 
     tracing::info!(
         node_id = %node_id,
-        hw = %req.hw_fingerprint,
+        hw = %hw_fingerprint,
         public_ip = %client_ip,
+        gpus = req.node.get("gpus").and_then(|g| g.as_array()).map(|a| a.len()).unwrap_or(0),
         "node enrolled"
     );
 

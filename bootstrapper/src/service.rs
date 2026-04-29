@@ -92,6 +92,16 @@ pub async fn status() -> Result<()> {
         }
         None => println!("  enrolled:      no"),
     }
+
+    // Full inventory — same block the worker prints on start and the same
+    // shape the gateway sees via /cluster/nodes/report. One canonical view.
+    match gpucluster_sysinfo::collect() {
+        Ok(info) => {
+            println!();
+            print!("{}", gpucluster_sysinfo::inventory::format_human(&info));
+        }
+        Err(e) => println!("inventory: <unavailable> ({e})"),
+    }
     Ok(())
 }
 
