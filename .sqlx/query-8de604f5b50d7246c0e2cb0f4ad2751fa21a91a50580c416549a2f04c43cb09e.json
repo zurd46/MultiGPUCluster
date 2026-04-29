@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cluster_settings (key, value, updated_at)\n               VALUES ($1, $2, now())\n               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8de604f5b50d7246c0e2cb0f4ad2751fa21a91a50580c416549a2f04c43cb09e"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor, action, resource)\n         VALUES ('admin', 'MODEL_CREATED', $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6724b2ef0c7f7370b3b8d8606dcf56c88fae4320251ee9b13660ce52e15dc00f"
+}

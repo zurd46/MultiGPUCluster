@@ -12,12 +12,25 @@ use crate::schema::{ChatMessage, ChatRequest, ChatResponse, Choice, ModelEntry, 
 #[derive(Clone)]
 pub struct ApiState {
     pub coordinator_url: String,
+    /// Optional mgmt-backend URL. When present + `mgmt_token` is set, /v1/models
+    /// is sourced from the mgmt model registry (the source of truth the admin
+    /// UI edits). When absent we fall back to a single "auto" entry derived
+    /// from the live coordinator node count.
+    pub mgmt_url: Option<String>,
+    pub mgmt_token: Option<String>,
     pub http: reqwest::Client,
 }
 
-pub async fn run(bind: &str, coord: &str) -> Result<()> {
+pub async fn run(
+    bind: &str,
+    coord: &str,
+    mgmt_url: Option<String>,
+    mgmt_token: Option<String>,
+) -> Result<()> {
     let state = Arc::new(ApiState {
         coordinator_url: coord.trim_end_matches('/').to_string(),
+        mgmt_url: mgmt_url.map(|s| s.trim_end_matches('/').to_string()),
+        mgmt_token,
         http: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -38,11 +51,31 @@ pub async fn run(bind: &str, coord: &str) -> Result<()> {
 }
 
 async fn list_models(State(s): State<Arc<ApiState>>) -> Json<ModelList> {
-    // Phase 2 will publish concrete model IDs once the model registry lands.
-    // Until then we synthesize a single "auto" entry that always picks the
-    // best-fit model for the current cluster — this keeps LM Studio happy
-    // (it requires at least one model in the list) without lying about
-    // capabilities.
+    // Source of truth: mgmt registry when configured, otherwise a synthetic
+    // "auto" placeholder so LM Studio (which requires a non-empty model list)
+    // doesn't refuse to render the connection.
+    if let Some(rows) = fetch_registry(&s).await {
+        if !rows.is_empty() {
+            let data = rows
+                .into_iter()
+                .filter(|m| {
+                    m.get("status")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s != "disabled")
+                        .unwrap_or(true)
+                })
+                .map(|m| ModelEntry {
+                    id: m.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    object: "model",
+                    owned_by: "gpucluster".into(),
+                })
+                .collect();
+            return Json(ModelList {
+                object: "list",
+                data,
+            });
+        }
+    }
     let cluster_size = probe_cluster_size(&s).await;
     Json(ModelList {
         object: "list",
@@ -101,6 +134,17 @@ async fn chat_completions(
     // For now: structured 501 that *proves* dispatch picked a real node —
     // distinct from the previous blanket 503. The next step is to actually
     // forward to `chosen.wg_ip:50052` over llama.cpp's RPC protocol.
+    let _ = ChatResponse {
+        id: String::new(),
+        object: "chat.completion",
+        created: 0,
+        model: String::new(),
+        choices: vec![Choice {
+            index: 0,
+            message: ChatMessage { role: "assistant".into(), content: String::new() },
+            finish_reason: "stop".into(),
+        }],
+    };
     Err((
         StatusCode::NOT_IMPLEMENTED,
         Json(serde_json::json!({
@@ -129,4 +173,17 @@ async fn probe_cluster_size(s: &ApiState) -> usize {
         }
         _ => 0,
     }
+}
+
+/// Returns the model registry rows from mgmt-backend, or `None` if mgmt isn't
+/// configured / unreachable. Caller falls back to the synthesised "auto" entry.
+async fn fetch_registry(s: &ApiState) -> Option<Vec<serde_json::Value>> {
+    let mgmt = s.mgmt_url.as_deref()?;
+    let token = s.mgmt_token.as_deref()?;
+    let url = format!("{mgmt}/api/v1/models");
+    let res = s.http.get(url).bearer_auth(token).send().await.ok()?;
+    if !res.status().is_success() {
+        return None;
+    }
+    res.json::<Vec<serde_json::Value>>().await.ok()
 }

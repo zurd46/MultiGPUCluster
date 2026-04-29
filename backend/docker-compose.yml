@@ -73,6 +73,9 @@ services:
       # API only talks HTTP to the coordinator today; gRPC dispatch lands in
       # Phase 2.
       COORDINATOR_HTTP_URL: http://coordinator:7001
+      # Source of truth for /v1/models (the admin-editable registry).
+      MGMT_BACKEND_URL: http://mgmt:7100
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
     expose: ["7200"]
     depends_on: [coordinator]
 

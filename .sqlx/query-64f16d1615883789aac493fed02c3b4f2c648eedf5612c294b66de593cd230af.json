@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor, action, resource, details)\n         VALUES ('admin', 'SETTINGS_UPDATED', 'cluster_settings', $1::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "64f16d1615883789aac493fed02c3b4f2c648eedf5612c294b66de593cd230af"
+}

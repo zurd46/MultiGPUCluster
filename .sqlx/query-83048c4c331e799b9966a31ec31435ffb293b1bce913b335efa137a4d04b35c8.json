@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE models SET is_default = FALSE WHERE is_default = TRUE",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "83048c4c331e799b9966a31ec31435ffb293b1bce913b335efa137a4d04b35c8"
+}

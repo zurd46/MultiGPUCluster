@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::{
     middleware,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use serde_json::json;
@@ -11,7 +11,7 @@ use crate::{
     auth, ca_store,
     config::MgmtConfig,
     db,
-    handlers::{api_keys, audit, enroll, enroll_token, nodes},
+    handlers::{api_keys, audit, enroll, enroll_token, models, nodes, settings},
     state::AppState,
 };
 
@@ -54,6 +54,12 @@ pub async fn run(cfg: MgmtConfig) -> Result<()> {
                patch(api_keys::update).delete(api_keys::delete))
         .route("/api/v1/keys/{id}/revoke",         post(api_keys::revoke))
         .route("/api/v1/keys/verify",              post(api_keys::verify))
+        // Cluster-wide settings (KV) and the model registry. Both feed the
+        // OpenAI-API + the admin UI.
+        .route("/api/v1/settings",                 get(settings::get).put(settings::put))
+        .route("/api/v1/models",                   get(models::list).post(models::create))
+        .route("/api/v1/models/{id}",
+               patch(models::update).delete(models::delete))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_admin));
 
     let app = public.merge(admin).with_state(state);
