@@ -7,7 +7,7 @@ use axum::{
 };
 use std::{net::SocketAddr, sync::Arc};
 
-use crate::schema::{ChatRequest, ModelEntry, ModelList};
+use crate::schema::{ModelEntry, ModelList};
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -89,8 +89,17 @@ async fn list_models(State(s): State<Arc<ApiState>>) -> Json<ModelList> {
 
 async fn chat_completions(
     State(s): State<Arc<ApiState>>,
-    Json(req): Json<ChatRequest>,
+    Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // Pull the few fields we need for routing/logging without locking us into
+    // a strict schema — llama-server understands far more knobs than the
+    // OpenAI minimum, and we want to forward all of them transparently.
+    let req_model = req.get("model").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
+    let req_messages_len = req
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
     // Phase 2 dispatcher (skeleton): ask the coordinator who can take work,
     // then return a structured response that names the chosen node. The
     // actual model invocation over llama.cpp RPC is the *next* commit; the
@@ -139,7 +148,7 @@ async fn chat_completions(
                 "error": {
                     "type": "no_eligible_nodes",
                     "message": "no worker is currently online with a usable GPU",
-                    "request_model": req.model,
+                    "request_model": req_model,
                 }
             })),
         ));
@@ -158,7 +167,7 @@ async fn chat_completions(
                     "type": "no_inference_endpoint",
                     "message": "a worker is online but no model is loaded — set MODEL_PATH on a worker and restart",
                     "phase": "2-dispatcher",
-                    "request_model": req.model,
+                    "request_model": req_model,
                     "chosen_worker": chosen,
                 }
             })),
@@ -168,19 +177,21 @@ async fn chat_completions(
     // Forward the original chat-completion request to the chosen worker's
     // llama-server. This is the actual work of Phase 2: the worker has the
     // GGUF + GPU; we just relay JSON.
-    forward_chat_to_worker(&s, &inference_url, &req).await
+    forward_chat_to_worker(&s, &inference_url, &req, &req_model, req_messages_len).await
 }
 
 async fn forward_chat_to_worker(
     s: &ApiState,
     inference_url: &str,
-    req: &ChatRequest,
+    req: &serde_json::Value,
+    req_model: &str,
+    req_messages_len: usize,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let upstream = format!("{}/v1/chat/completions", inference_url.trim_end_matches('/'));
     tracing::info!(
         upstream = %upstream,
-        model = %req.model,
-        messages = req.messages.len(),
+        model = %req_model,
+        messages = req_messages_len,
         "forwarding chat completion to worker"
     );
 
