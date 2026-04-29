@@ -2,9 +2,9 @@
 
 > Distributed multi-GPU cluster for LLM inference and fine-tuning, with first-class support for heterogeneous hardware spread across the public internet.
 
-[![CI](https://github.com/dzurmuehle/MultiGPUCluster/actions/workflows/ci.yml/badge.svg)](https://github.com/dzurmuehle/MultiGPUCluster/actions/workflows/ci.yml)
+[![CI](https://github.com/zurd46/MultiGPUCluster/actions/workflows/ci.yml/badge.svg)](https://github.com/zurd46/MultiGPUCluster/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Rust](https://img.shields.io/badge/rust-1.85-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.88-orange.svg)](https://www.rust-lang.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-12.8-green.svg)](https://developer.nvidia.com/cuda-toolkit)
 
 MultiGPUCluster pools NVIDIA GPUs from machines at different locations into a single logical compute fabric. It speaks the OpenAI API so tools like **LM Studio** can use it as a drop-in inference backend, and runs distributed fine-tuning jobs across the same fleet.
@@ -99,7 +99,7 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full architecture document, including
 ### 1. Deploy the backend
 
 ```bash
-git clone https://github.com/dzurmuehle/MultiGPUCluster.git
+git clone https://github.com/zurd46/MultiGPUCluster.git
 cd MultiGPUCluster/backend
 
 cp .env.example .env
