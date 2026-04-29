@@ -86,15 +86,22 @@ async fn overview(State(s): State<Arc<GatewayState>>, headers: HeaderMap) -> imp
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_owned());
 
+    let url_mgmt_health   = format!("{mgmt_url}/health");
+    let url_coord_health  = format!("{coord_url}/health");
+    let url_openai_health = format!("{openai_url}/health");
+    let url_coord_nodes   = format!("{coord_url}/nodes");
+    let url_mgmt_nodes    = format!("{mgmt_url}/api/v1/nodes");
+    let url_openai_models = format!("{openai_url}/v1/models");
+
     // health checks (parallel)
-    let h_mgmt = check_health(&s.http, &format!("{mgmt_url}/health"));
-    let h_coord = check_health(&s.http, &format!("{coord_url}/health"));
-    let h_openai = check_health(&s.http, &format!("{openai_url}/health"));
+    let h_mgmt   = check_health(&s.http, &url_mgmt_health);
+    let h_coord  = check_health(&s.http, &url_coord_health);
+    let h_openai = check_health(&s.http, &url_openai_health);
 
     // payloads (parallel)
-    let p_coord = fetch_json(&s.http, &format!("{coord_url}/nodes"), None);
-    let p_mgmt = fetch_json(&s.http, &format!("{mgmt_url}/api/v1/nodes"), bearer.as_deref());
-    let p_models = fetch_json(&s.http, &format!("{openai_url}/v1/models"), None);
+    let p_coord  = fetch_json(&s.http, &url_coord_nodes, None);
+    let p_mgmt   = fetch_json(&s.http, &url_mgmt_nodes, bearer.as_deref());
+    let p_models = fetch_json(&s.http, &url_openai_models, None);
 
     let (m, c, o, coord_nodes, mgmt_nodes, models) =
         tokio::join!(h_mgmt, h_coord, h_openai, p_coord, p_mgmt, p_models);

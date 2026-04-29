@@ -9,9 +9,17 @@ impl Placer for GreedyVramWeighted {
         req: &PlacementRequest,
         nodes: &[pb::NodeInfo],
     ) -> anyhow::Result<Vec<StageAssignment>> {
+        // 1. Flatten and filter by required precision so a Metal-only model can
+        //    legitimately span an M3 Max + an RTX 4090, while an FP8 job skips
+        //    everything pre-Ada and every Apple GPU.
         let mut gpus: Vec<(&pb::NodeInfo, &pb::GpuInfo)> = nodes
             .iter()
             .flat_map(|n| n.gpus.iter().map(move |g| (n, g)))
+            .filter(|(_, g)| {
+                g.capability
+                    .as_ref()
+                    .map_or(false, |c| req.required_precision.supported_by(c))
+            })
             .collect();
 
         gpus.sort_by(|a, b| b.1.vram_free_bytes.cmp(&a.1.vram_free_bytes));
@@ -35,6 +43,8 @@ impl Placer for GreedyVramWeighted {
                 gpu_index: g.index,
                 layer_start: cursor,
                 layer_end: cursor + layers,
+                backend: pb::GpuBackend::try_from(g.backend)
+                    .unwrap_or(pb::GpuBackend::Unspecified),
             });
             cursor += layers;
         }
