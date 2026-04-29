@@ -2,6 +2,7 @@ use anyhow::Result;
 use axum::middleware as axmid;
 use std::net::SocketAddr;
 use std::time::Duration;
+use axum::http::StatusCode;
 use tower_http::{
     cors::CorsLayer,
     limit::RequestBodyLimitLayer,
@@ -17,7 +18,10 @@ pub async fn run(cfg: GatewayConfig) -> Result<()> {
         .layer(axmid::from_fn(gw::request_id))
         .layer(CorsLayer::permissive())
         .layer(RequestBodyLimitLayer::new(50 * 1024 * 1024))
-        .layer(TimeoutLayer::new(Duration::from_secs(300)))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(300),
+        ))
         .layer(TraceLayer::new_for_http());
 
     let addr: SocketAddr = cfg.bind.parse()?;
