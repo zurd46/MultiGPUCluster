@@ -83,12 +83,12 @@ let modalResolver = null;
 function closeModal(value) {
   const dlg = $("modal");
   if (!dlg.open) return;
+  // Capture-then-null BEFORE dlg.close() — the native "close" event fires
+  // synchronously and would otherwise resolve with the wrong value.
+  const r = modalResolver;
+  modalResolver = null;
   dlg.close();
-  if (modalResolver) {
-    const r = modalResolver;
-    modalResolver = null;
-    r(value);
-  }
+  if (r) r(value);
 }
 
 function openModal({ title, body, actions }) {
