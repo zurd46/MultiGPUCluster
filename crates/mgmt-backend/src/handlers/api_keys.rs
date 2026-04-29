@@ -186,6 +186,115 @@ pub async fn revoke(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdateRequest {
+    pub name: Option<String>,
+    pub scope: Option<String>,
+    /// Replace the expiry. `Some(Some(secs))` sets a new TTL from *now*,
+    /// `Some(None)` clears the expiry, `None` leaves it unchanged.
+    pub ttl_secs: Option<Option<i64>>,
+}
+
+/// PATCH /api/v1/keys/{id} — edit metadata of an existing key. Cannot rotate
+/// the secret (you'd need to issue a new key for that). Allowed fields:
+/// `name`, `scope`, `ttl_secs`.
+pub async fn update(
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateRequest>,
+) -> ApiResult<Json<KeyRow>> {
+    if let Some(name) = req.name.as_deref() {
+        if name.trim().is_empty() {
+            return Err(ApiError::BadRequest("name must not be empty".into()));
+        }
+    }
+    if let Some(scope) = req.scope.as_deref() {
+        if !matches!(scope, "inference" | "admin") {
+            return Err(ApiError::BadRequest(
+                "scope must be 'inference' or 'admin'".into(),
+            ));
+        }
+    }
+
+    // Compute new expiry up front so the SQL stays single-shot.
+    let new_expiry: Option<Option<DateTime<Utc>>> = req.ttl_secs.map(|opt| {
+        opt.filter(|n| *n > 0)
+            .map(|n| Utc::now() + Duration::seconds(n.clamp(60, 365 * 24 * 3600)))
+    });
+
+    let updated = sqlx::query_as!(
+        KeyRow,
+        r#"UPDATE api_keys SET
+              name       = COALESCE($2, name),
+              scope      = COALESCE($3, scope),
+              expires_at = CASE
+                              WHEN $4::bool THEN $5
+                              ELSE expires_at
+                           END
+           WHERE id = $1
+           RETURNING id, name, prefix, scope, created_at, last_used_at, expires_at, revoked_at"#,
+        id,
+        req.name.as_deref(),
+        req.scope.as_deref(),
+        new_expiry.is_some(),
+        new_expiry.flatten(),
+    )
+    .fetch_optional(&s.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    sqlx::query!(
+        "INSERT INTO audit_log (actor, action, resource, details)
+         VALUES ('admin', 'API_KEY_UPDATED', $1, $2::jsonb)",
+        id.to_string(),
+        serde_json::json!({
+            "name": req.name,
+            "scope": req.scope,
+            "ttl_secs": req.ttl_secs,
+        }),
+    )
+    .execute(&s.pool)
+    .await
+    .ok();
+
+    Ok(Json(updated))
+}
+
+/// DELETE /api/v1/keys/{id}?purge=true — hard delete. Without `purge=true`
+/// this falls back to a soft revoke (same as POST /keys/{id}/revoke), so
+/// accidentally hitting DELETE in the UI doesn't drop the audit trail.
+#[derive(Debug, Deserialize)]
+pub struct DeleteQuery {
+    #[serde(default)]
+    pub purge: bool,
+}
+
+pub async fn delete(
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    axum::extract::Query(q): axum::extract::Query<DeleteQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    if q.purge {
+        let res = sqlx::query!("DELETE FROM api_keys WHERE id = $1", id)
+            .execute(&s.pool)
+            .await?;
+        if res.rows_affected() == 0 {
+            return Err(ApiError::NotFound);
+        }
+        sqlx::query!(
+            "INSERT INTO audit_log (actor, action, resource)
+             VALUES ('admin', 'API_KEY_PURGED', $1)",
+            id.to_string(),
+        )
+        .execute(&s.pool)
+        .await
+        .ok();
+        Ok(Json(serde_json::json!({ "ok": true, "purged": true })))
+    } else {
+        revoke(State(s), Path(id)).await
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct VerifyRequest {
     pub token: String,
 }

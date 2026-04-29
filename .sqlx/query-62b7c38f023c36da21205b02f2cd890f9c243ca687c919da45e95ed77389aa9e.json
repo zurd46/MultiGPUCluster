@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE api_keys SET\n              name       = COALESCE($2, name),\n              scope      = COALESCE($3, scope),\n              expires_at = CASE\n                              WHEN $4::bool THEN $5\n                              ELSE expires_at\n                           END\n           WHERE id = $1\n           RETURNING id, name, prefix, scope, created_at, last_used_at, expires_at, revoked_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "prefix",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "scope",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_used_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "revoked_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "62b7c38f023c36da21205b02f2cd890f9c243ca687c919da45e95ed77389aa9e"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor, action, resource, details)\n         VALUES ('admin', 'API_KEY_UPDATED', $1, $2::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "452393fde9d9db953d697c150a4c8cfa6b90d1d15f129b34ff9b518ecfccfc71"
+}

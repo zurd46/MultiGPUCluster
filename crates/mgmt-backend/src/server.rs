@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::{
     middleware,
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde_json::json;
@@ -46,8 +46,13 @@ pub async fn run(cfg: MgmtConfig) -> Result<()> {
         .route("/api/v1/audit",                    get(audit::list))
         // Customer API keys for /v1/*. `verify` is admin-bearer-only too —
         // it's a service-to-service call from the gateway, not a public route.
+        // PATCH edits metadata (name/scope/ttl); DELETE soft-revokes by default
+        // and hard-purges with ?purge=true; POST /{id}/revoke is the explicit
+        // soft-revoke for clients that don't speak DELETE.
         .route("/api/v1/keys",                     post(api_keys::create).get(api_keys::list))
-        .route("/api/v1/keys/{id}",                axum::routing::delete(api_keys::revoke))
+        .route("/api/v1/keys/{id}",
+               patch(api_keys::update).delete(api_keys::delete))
+        .route("/api/v1/keys/{id}/revoke",         post(api_keys::revoke))
         .route("/api/v1/keys/verify",              post(api_keys::verify))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_admin));
 
