@@ -22,7 +22,7 @@ The system is designed for **mixed hardware** — NVIDIA GPUs (RTX 5060 Ti + RTX
 - **Zero-trust gateway** — TLS 1.3, mTLS for nodes, RBAC, rate limiting, immutable audit log, anomaly detection.
 - **LM Studio compatible** — exposes `/v1/chat/completions` and `/v1/models` via an OpenAI-compatible layer.
 - **Backend = system image, clients = containers or native binary** — a single `docker compose up` brings up the entire control plane; macOS workers ship as a native `.pkg`.
-- **One URL for everything** — Caddy → Gateway fans out `/api/*` (mgmt), `/cluster/*` (coordinator), `/v1/*` (openai-api), `/enroll` (worker enrollment). A built-in HTML admin page on `/` aggregates all services live; `/overview` returns the same data as JSON.
+- **One URL for everything** — Caddy → Gateway fans out `/api/*` (mgmt), `/cluster/*` (coordinator), `/v1/*` (openai-api), `/enroll` (worker enrollment). A built-in **Cluster Management UI** on `/` aggregates all services live (KPI tiles, node-status donut, searchable tables, auto-refresh every 5 s); `/overview` returns the same data as JSON.
 
 ---
 
@@ -357,7 +357,7 @@ Two options — pick whichever is convenient:
 ```bash
 cd backend
 docker compose up -d --build
-open http://localhost:8443/        # admin / Verwaltung (gateway direct)
+open http://localhost:8443/        # Cluster Management UI (gateway direct)
 open http://localhost/             # via Caddy (uses BACKEND_DOMAIN, default localhost)
 ```
 

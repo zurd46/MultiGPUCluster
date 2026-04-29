@@ -2,6 +2,7 @@ pub mod gpu;
 pub mod os;
 pub mod network;
 pub mod fingerprint;
+pub mod inventory;
 
 #[cfg(target_os = "macos")]
 mod gpu_metal;
@@ -9,22 +10,21 @@ mod gpu_metal;
 use gpucluster_proto::node as pb;
 
 pub fn collect() -> anyhow::Result<pb::NodeInfo> {
-    let os = os::detect()?;
+    let os_info = os::detect()?;
     let gpus = gpu::detect()?;
     let cpu_mem = os::cpu_mem();
     let network = network::detect();
     let hw_fingerprint = fingerprint::compute()?;
+    let hostname = os::hostname();
 
     Ok(pb::NodeInfo {
         node_id: String::new(),
-        hostname: hostname::get()
-            .map(|h| h.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        hostname,
         display_name: String::new(),
         hw_fingerprint,
         owner_user_id: String::new(),
         tags: Vec::new(),
-        os: Some(os),
+        os: Some(os_info),
         gpus,
         network: Some(network),
         cpu_mem: Some(cpu_mem),
@@ -35,10 +35,4 @@ pub fn collect() -> anyhow::Result<pb::NodeInfo> {
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
         client_cert_sha: String::new(),
     })
-}
-
-mod hostname {
-    pub fn get() -> Option<std::ffi::OsString> {
-        std::env::var_os("HOSTNAME").or_else(|| std::env::var_os("COMPUTERNAME"))
-    }
 }
