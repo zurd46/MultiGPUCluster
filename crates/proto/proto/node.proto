@@ -35,10 +35,14 @@ enum NodeStatus {
 }
 
 message OsInfo {
-  string family    = 1;
-  string version   = 2;
-  string kernel    = 3;
-  string arch      = 4;
+  string family       = 1;
+  string version      = 2;
+  string kernel       = 3;
+  string arch         = 4;
+  // User-friendly device name where the OS distinguishes it from the
+  // hostname (macOS: `scutil --get ComputerName`, Linux: `hostnamectl
+  // --pretty`). Falls back to the hostname when no separate label exists.
+  string device_name  = 5;
 }
 
 // Backend a GPU is driven by — also determines which inference RPC server

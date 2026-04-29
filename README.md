@@ -123,7 +123,7 @@ Caddy provisions a TLS cert from Let's Encrypt for `BACKEND_DOMAIN`. Once up, **
 
 ```bash
 # Production (Caddy → Gateway, TLS terminated by Caddy)
-open https://cluster.example.com/        # HTML admin / Verwaltung
+open https://cluster.example.com/        # Cluster Management UI
 curl https://cluster.example.com/health  # {"status":"ok"}
 curl https://cluster.example.com/overview  # aggregated JSON across all services
 
@@ -138,7 +138,7 @@ The admin page on `/` shows live service health, the coordinator's node registry
 
 | Path | Upstream | Purpose |
 |---|---|---|
-| `/` | gateway | HTML admin / Verwaltung |
+| `/` | gateway | Cluster Management UI |
 | `/overview` | gateway | JSON aggregator (services + nodes + models) |
 | `/health`, `/ready` | gateway | Liveness / readiness |
 | `/api/v1/...` | mgmt-backend (`:7100`) | Users, nodes, enrollment tokens, audit |
