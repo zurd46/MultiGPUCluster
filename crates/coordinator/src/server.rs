@@ -39,6 +39,10 @@ async fn run_http(bind: &str, reg: Registry) -> Result<()> {
         // here (proxied via /cluster/nodes/report on the gateway). Acts as
         // upsert-by-node_id, so it doubles as registration AND heartbeat.
         .route("/nodes/report", post(report_node))
+        // GET /nodes/eligible — dispatch-time view: only nodes that can
+        // currently serve an inference request (status=online, GPU present,
+        // recent heartbeat). Phase 2 scheduler reads this.
+        .route("/nodes/eligible", get(eligible_nodes))
         .with_state(reg);
 
     let addr: SocketAddr = bind.parse()?;
@@ -85,6 +89,60 @@ fn status_label(status: i32) -> &'static str {
         pb::NodeStatus::Quarantined      => "quarantined",
         pb::NodeStatus::Revoked          => "revoked",
     }
+}
+
+/// Phase 2 dispatch helper: returns a slim view of nodes that can take a job
+/// right now. Filters out anything not actively heartbeating with a usable GPU.
+async fn eligible_nodes(State(reg): State<Registry>) -> Json<Value> {
+    use chrono::{Duration as ChronoDuration, Utc};
+    let stale = ChronoDuration::seconds(60);
+    let now = Utc::now();
+
+    let eligible: Vec<Value> = reg
+        .list()
+        .into_iter()
+        .filter(|e| {
+            // Heartbeat fresh AND has at least one GPU AND not in a terminal
+            // state. We're permissive on `pending_approval` for dev setups —
+            // production would gate that behind admin approval.
+            now.signed_duration_since(e.last_heartbeat) < stale
+                && !e.info.gpus.is_empty()
+                && !matches!(
+                    pb::NodeStatus::try_from(e.info.status).unwrap_or(pb::NodeStatus::Unspecified),
+                    pb::NodeStatus::Revoked
+                        | pb::NodeStatus::Quarantined
+                        | pb::NodeStatus::Draining
+                        | pb::NodeStatus::Offline
+                )
+        })
+        .map(|e| {
+            let primary = e.info.gpus.first();
+            json!({
+                "node_id":     e.info.node_id,
+                "device_name": e.info.os.as_ref().map(|o| o.device_name.clone()),
+                "wg_ip":       e.info.network.as_ref().map(|n| n.wg_ip.clone()),
+                "public_ip":   e.current_public_ip,
+                "rpc_port":    50052,
+                "gpu": primary.map(|g| json!({
+                    "name":         g.name,
+                    "backend":      pb::GpuBackend::try_from(g.backend)
+                        .ok().map(|b| match b {
+                            pb::GpuBackend::Cuda => "cuda",
+                            pb::GpuBackend::Metal => "metal",
+                            pb::GpuBackend::Rocm => "rocm",
+                            pb::GpuBackend::Vulkan => "vulkan",
+                            _ => "unspecified",
+                        }),
+                    "architecture": g.architecture,
+                    "vram_total":   g.vram_total_bytes,
+                    "vram_free":    g.vram_free_bytes,
+                    "core_count":   g.gpu_core_count,
+                })),
+            })
+        })
+        .collect();
+
+    Json(json!({ "count": eligible.len(), "nodes": eligible }))
 }
 
 async fn report_node(

@@ -58,38 +58,62 @@ async fn chat_completions(
     State(s): State<Arc<ApiState>>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // Real distributed inference lands in Phase 2 (llama.cpp RPC fork +
-    // scheduler placement). Until then we return a structured 503 that tells
-    // the caller exactly why no token came back, instead of pretending to
-    // answer — silent stubs are worse than honest errors when wiring up
-    // tooling like LM Studio.
-    let nodes = probe_cluster_size(&s).await;
-    let body = serde_json::json!({
-        "error": {
-            "type": "service_unavailable",
-            "message": "distributed inference not yet wired up (Phase 2)",
-            "phase": "1",
-            "cluster_nodes_visible": nodes,
-            "request_model": req.model,
-            "request_messages": req.messages.len(),
-            "next_step": "implement openai-api → scheduler → rpc-server-ext on workers"
+    // Phase 2 dispatcher (skeleton): ask the coordinator who can take work,
+    // then return a structured response that names the chosen node. The
+    // actual model invocation over llama.cpp RPC is the *next* commit; the
+    // hop is the new hard part — once a node is reliably picked we can
+    // forward the prompt to its `rpc-server-ext` and stream tokens back.
+    let url = format!("{}/nodes/eligible", s.coordinator_url);
+    let resp: serde_json::Value = match s.http.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r.json().await.unwrap_or(serde_json::Value::Null),
+        Ok(r) => {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": { "type": "coordinator_error", "status": r.status().as_u16() }
+                })),
+            ));
         }
-    });
-    let _ = ChatResponse {
-        // Keep the type alive so it compiles when we wire the real path; this
-        // arm is unreachable today but flips on once the Phase-2 dispatcher
-        // returns Result<ChatResponse, _>.
-        id: String::new(),
-        object: "chat.completion",
-        created: 0,
-        model: String::new(),
-        choices: vec![Choice {
-            index: 0,
-            message: ChatMessage { role: "assistant".into(), content: String::new() },
-            finish_reason: "stop".into(),
-        }],
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": { "type": "coordinator_unreachable", "message": e.to_string() }
+                })),
+            ));
+        }
     };
-    Err((StatusCode::SERVICE_UNAVAILABLE, Json(body)))
+
+    let nodes = resp.get("nodes").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let Some(chosen) = nodes.first().cloned() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": {
+                    "type": "no_eligible_nodes",
+                    "message": "no worker is currently online with a usable GPU",
+                    "request_model": req.model,
+                }
+            })),
+        ));
+    };
+
+    // For now: structured 501 that *proves* dispatch picked a real node —
+    // distinct from the previous blanket 503. The next step is to actually
+    // forward to `chosen.wg_ip:50052` over llama.cpp's RPC protocol.
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "error": {
+                "type": "dispatch_not_wired",
+                "message": "selected a worker but llama.cpp RPC forwarding is the next commit",
+                "phase": "2-skeleton",
+                "request_model": req.model,
+                "request_messages": req.messages.len(),
+                "chosen_worker": chosen,
+            }
+        })),
+    ))
 }
 
 async fn probe_cluster_size(s: &ApiState) -> usize {
