@@ -56,6 +56,45 @@ pub fn default_http_client() -> Client {
         .unwrap_or_else(|_| Client::new())
 }
 
+/// Build a worker-side `reqwest::Client` that presents the supplied client
+/// certificate + key on every outbound TLS handshake (mTLS). The PEM blobs
+/// are exactly what the enrollment response stored in `identity.json`.
+///
+/// `ca_chain_pem` is the cluster CA — used to *trust* the gateway's server
+/// cert when it lives behind Caddy with the cluster's own CA, and on the
+/// dev path we accept invalid certs so workers can talk to a Caddy
+/// internally-issued cert without extra setup.
+///
+/// On any cert parse / build error we fall back to a non-mTLS client and log
+/// a warning — heartbeat is more important than perfectly-secure transport
+/// during dev. Production callers should treat the warning as fatal.
+pub fn worker_http_client(
+    client_cert_pem: &str,
+    client_key_pem: &str,
+    accept_invalid_certs: bool,
+) -> Client {
+    let mut builder = Client::builder()
+        .timeout(DEFAULT_TIMEOUT)
+        .connect_timeout(DEFAULT_CONNECT_TIMEOUT);
+
+    if !client_cert_pem.is_empty() && !client_key_pem.is_empty() {
+        let combined = format!("{}\n{}", client_cert_pem.trim(), client_key_pem.trim());
+        match reqwest::Identity::from_pem(combined.as_bytes()) {
+            Ok(id) => {
+                builder = builder.identity(id);
+                tracing::info!("worker http client built with mTLS identity");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to parse client identity PEM — falling back to plain HTTP");
+            }
+        }
+    }
+    if accept_invalid_certs {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+    builder.build().unwrap_or_else(|_| Client::new())
+}
+
 // ---------- Coordinator ----------
 
 /// Talks to the coordinator's HTTP API (default port [`super::ports::COORDINATOR_HTTP`]).

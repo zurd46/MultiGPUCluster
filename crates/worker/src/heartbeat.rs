@@ -43,10 +43,11 @@ pub async fn run_loop(
     sup: SharedSupervisor,
     control_endpoint: String,
 ) {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    // Pull mTLS material from the bootstrapper's identity file so heartbeats
+    // present a client cert to the gateway. Falls back to a plain client when
+    // identity.json is missing (worker started outside of an enrolled host —
+    // typical for `cargo run -p gpucluster-worker` smoke tests).
+    let client = build_worker_http_client();
 
     let report_url = format!("{}/nodes/report", coordinator_url.trim_end_matches('/'));
     let node_id = info.node_id.clone();
