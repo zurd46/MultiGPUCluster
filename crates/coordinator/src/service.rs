@@ -36,7 +36,7 @@ impl CoordinatorService for CoordSvc {
     }
 
     type HeartbeatStream =
-        std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<HeartbeatResponse, Status>> + Send>>;
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<HeartbeatResponse, Status>> + Send>>;
 
     async fn heartbeat(
         &self,
@@ -53,7 +53,7 @@ impl CoordinatorService for CoordSvc {
     }
 
     type StreamJobsStream =
-        std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<JobAssignment, Status>> + Send>>;
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<JobAssignment, Status>> + Send>>;
 
     async fn stream_jobs(
         &self,

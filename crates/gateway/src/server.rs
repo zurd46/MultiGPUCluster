@@ -2,27 +2,23 @@ use anyhow::Result;
 use axum::middleware as axmid;
 use std::net::SocketAddr;
 use std::time::Duration;
-use tower::ServiceBuilder;
 use tower_http::{
-    timeout::TimeoutLayer,
-    limit::RequestBodyLimitLayer,
-    trace::TraceLayer,
     cors::CorsLayer,
+    limit::RequestBodyLimitLayer,
+    timeout::TimeoutLayer,
+    trace::TraceLayer,
 };
 
 use crate::{config::GatewayConfig, middleware as gw, routes};
 
 pub async fn run(cfg: GatewayConfig) -> Result<()> {
     let app = routes::build()
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(TimeoutLayer::new(Duration::from_secs(300)))
-                .layer(RequestBodyLimitLayer::new(50 * 1024 * 1024))
-                .layer(CorsLayer::permissive())
-                .layer(axmid::from_fn(gw::request_id))
-                .layer(axmid::from_fn(gw::capture_public_ip)),
-        );
+        .layer(axmid::from_fn(gw::capture_public_ip))
+        .layer(axmid::from_fn(gw::request_id))
+        .layer(CorsLayer::permissive())
+        .layer(RequestBodyLimitLayer::new(50 * 1024 * 1024))
+        .layer(TimeoutLayer::new(Duration::from_secs(300)))
+        .layer(TraceLayer::new_for_http());
 
     let addr: SocketAddr = cfg.bind.parse()?;
     tracing::info!(%addr, "gateway listening");
