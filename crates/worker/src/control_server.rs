@@ -21,7 +21,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
-pub const DEFAULT_CONTROL_PORT: u16 = 50054;
+/// Re-export of [`gpucluster_common::ports::WORKER_CONTROL`] so existing
+/// `agent.rs` callers don't need to chase imports.
+pub const DEFAULT_CONTROL_PORT: u16 = gpucluster_common::ports::WORKER_CONTROL;
 
 #[derive(Clone)]
 struct ControlState {

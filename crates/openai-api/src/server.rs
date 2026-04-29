@@ -7,36 +7,42 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use gpucluster_common::clients::{
+    default_http_client, ClientError, CoordClient, MgmtClient, WorkerClient,
+};
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use crate::schema::{ModelEntry, ModelList};
 
 #[derive(Clone)]
 pub struct ApiState {
-    pub coordinator_url: String,
-    /// Optional mgmt-backend URL. When present + `mgmt_token` is set, /v1/models
-    /// is sourced from the mgmt model registry (the source of truth the admin
-    /// UI edits). When absent we fall back to a single "auto" entry derived
-    /// from the live coordinator node count.
-    pub mgmt_url: Option<String>,
-    pub mgmt_token: Option<String>,
+    pub coord: CoordClient,
+    /// `Some` when both mgmt URL and admin token are configured. Without it
+    /// we fall back to a synthesized `/v1/models` and skip request-log writes.
+    pub mgmt: Option<MgmtClient>,
+    /// Raw HTTP client kept around exclusively for the SSE-streaming forward,
+    /// where we need the unparsed `bytes_stream()` from llama-server. Every
+    /// other HTTP call goes through a typed client.
     pub http: reqwest::Client,
 }
 
 pub async fn run(
     bind: &str,
-    coord: &str,
+    coord_url: &str,
     mgmt_url: Option<String>,
     mgmt_token: Option<String>,
 ) -> Result<()> {
+    let http = default_http_client();
+    let mgmt = match (mgmt_url, mgmt_token) {
+        (Some(u), Some(t)) if !u.is_empty() && !t.is_empty() => {
+            Some(MgmtClient::with_http(u, Some(t), http.clone()))
+        }
+        _ => None,
+    };
     let state = Arc::new(ApiState {
-        coordinator_url: coord.trim_end_matches('/').to_string(),
-        mgmt_url: mgmt_url.map(|s| s.trim_end_matches('/').to_string()),
-        mgmt_token,
-        http: reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .build()?,
+        coord: CoordClient::with_http(coord_url, http.clone()),
+        mgmt,
+        http,
     });
 
     let app = Router::new()
@@ -46,7 +52,7 @@ pub async fn run(
         .with_state(state);
 
     let addr: SocketAddr = bind.parse()?;
-    tracing::info!(%addr, coordinator = %coord, "openai-api listening");
+    tracing::info!(%addr, coordinator = %coord_url, "openai-api listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -162,34 +168,37 @@ async fn chat_completions_json(
 
     // Pull the eligible-nodes view from the coordinator. This is also where
     // the dispatcher's first failure mode lives — if the coordinator is down
-    // or returns garbage, we tag the trace and bail.
-    let url = format!("{}/nodes/eligible", s.coordinator_url);
-    let resp: serde_json::Value = match s.http.get(&url).send().await {
-        Ok(r) if r.status().is_success() => r.json().await.unwrap_or(serde_json::Value::Null),
-        Ok(r) => {
+    // or returns garbage, we tag the trace and bail. The two ClientError
+    // variants we care about have different semantics (Upstream = HTTP error
+    // from the peer, anything else = transport / decode failure) so we map
+    // them to distinct trace error_types.
+    let resp = match s.coord.eligible_nodes().await {
+        Ok(v) => v,
+        Err(ClientError::Upstream { status, body, .. }) => {
             return finalize_error(
                 &s,
                 trace,
                 started,
                 StatusCode::BAD_GATEWAY,
                 "coordinator_error",
-                format!("coordinator returned {}", r.status().as_u16()),
+                format!("coordinator returned {status}: {body}"),
                 serde_json::json!({
-                    "error": { "type": "coordinator_error", "status": r.status().as_u16() }
+                    "error": { "type": "coordinator_error", "status": status }
                 }),
             )
             .await;
         }
-        Err(e) => {
+        Err(other) => {
+            let msg = other.to_string();
             return finalize_error(
                 &s,
                 trace,
                 started,
                 StatusCode::BAD_GATEWAY,
                 "coordinator_unreachable",
-                e.to_string(),
+                msg.clone(),
                 serde_json::json!({
-                    "error": { "type": "coordinator_unreachable", "message": e.to_string() }
+                    "error": { "type": "coordinator_unreachable", "message": msg }
                 }),
             )
             .await;
@@ -283,9 +292,8 @@ async fn forward_chat_to_worker(
     mut trace: RequestTrace,
     started: Instant,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let upstream = format!("{}/v1/chat/completions", inference_url.trim_end_matches('/'));
     tracing::info!(
-        upstream = %upstream,
+        upstream = %inference_url,
         model = %trace.model,
         messages = req_messages_len,
         node = trace.node_id.as_deref().unwrap_or(""),
@@ -293,75 +301,65 @@ async fn forward_chat_to_worker(
         "forwarding chat completion to worker"
     );
 
-    let resp = match s.http.post(&upstream).json(req).send().await {
-        Ok(r) => r,
-        Err(e) => {
+    // Build a per-request WorkerClient on the dispatcher's shared http
+    // client (so connection pooling kicks in). The base URL is whatever the
+    // coordinator told us — already a fully-qualified `http://host:port`.
+    let worker = WorkerClient::with_http(inference_url.to_string(), s.http.clone());
+    let parsed = match worker.chat_completions(req).await {
+        Ok(v) => v,
+        Err(ClientError::Upstream { status, body, .. }) => {
+            // Map worker 5xx → 502, 4xx → passthrough. The customer sees the
+            // worker's body in `upstream_body` either way.
+            let client_status = if (500..600).contains(&status) {
+                StatusCode::BAD_GATEWAY
+            } else {
+                StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY)
+            };
             return finalize_error(
                 s,
                 trace,
                 started,
-                StatusCode::BAD_GATEWAY,
-                "worker_unreachable",
-                e.to_string(),
+                client_status,
+                "worker_returned_error",
+                format!("worker {inference_url} returned {status}: {body}"),
                 serde_json::json!({
                     "error": {
-                        "type": "worker_unreachable",
-                        "upstream": upstream,
-                        "message": e.to_string(),
+                        "type": "worker_returned_error",
+                        "upstream_status": status,
+                        "upstream_body": body,
                     }
                 }),
             )
             .await;
         }
-    };
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        // Map upstream status to a sensible client-facing one. Any 5xx
-        // from llama-server bubbles up as 502 (the worker, not us, is
-        // broken); 4xx passes through unchanged.
-        let client_status = if status.is_server_error() {
-            StatusCode::BAD_GATEWAY
-        } else {
-            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY)
-        };
-        return finalize_error(
-            s,
-            trace,
-            started,
-            client_status,
-            "worker_returned_error",
-            format!("worker {} returned {}: {}", inference_url, status.as_u16(), body),
-            serde_json::json!({
-                "error": {
-                    "type": "worker_returned_error",
-                    "upstream_status": status.as_u16(),
-                    "upstream_body": body,
-                }
-            }),
-        )
-        .await;
-    }
-
-    // llama-server speaks the OpenAI schema natively. We pass the response
-    // through verbatim as `serde_json::Value` to preserve any extra fields
-    // (`usage`, `system_fingerprint`, …). Streaming (`text/event-stream`) is
-    // the next iteration; for now we assume the caller didn't set `stream`.
-    let parsed = match resp.json::<serde_json::Value>().await {
-        Ok(p) => p,
-        Err(e) => {
+        Err(ClientError::Decode(msg)) => {
             return finalize_error(
                 s,
                 trace,
                 started,
                 StatusCode::BAD_GATEWAY,
                 "worker_response_parse_error",
-                e.to_string(),
+                msg.clone(),
+                serde_json::json!({
+                    "error": { "type": "worker_response_parse_error", "message": msg }
+                }),
+            )
+            .await;
+        }
+        Err(ClientError::Transport(e)) => {
+            let msg = e.to_string();
+            return finalize_error(
+                s,
+                trace,
+                started,
+                StatusCode::BAD_GATEWAY,
+                "worker_unreachable",
+                msg.clone(),
                 serde_json::json!({
                     "error": {
-                        "type": "worker_response_parse_error",
-                        "message": e.to_string(),
+                        "type": "worker_unreachable",
+                        "upstream": inference_url,
+                        "message": msg,
                     }
                 }),
             )
@@ -420,14 +418,30 @@ async fn chat_completions_stream(
         .to_string();
 
     // 1) pick a worker via the coordinator
-    let url = format!("{}/nodes/eligible", s.coordinator_url);
-    let resp_json: serde_json::Value = match s.http.get(&url).send().await {
-        Ok(r) if r.status().is_success() => r.json().await.unwrap_or(serde_json::Value::Null),
-        Ok(r) => return stream_error(&s, trace, started,
-            StatusCode::BAD_GATEWAY, "coordinator_error",
-            format!("coordinator returned {}", r.status().as_u16())).await,
-        Err(e) => return stream_error(&s, trace, started,
-            StatusCode::BAD_GATEWAY, "coordinator_unreachable", e.to_string()).await,
+    let resp_json = match s.coord.eligible_nodes().await {
+        Ok(v) => v,
+        Err(ClientError::Upstream { status, body, .. }) => {
+            return stream_error(
+                &s,
+                trace,
+                started,
+                StatusCode::BAD_GATEWAY,
+                "coordinator_error",
+                format!("coordinator returned {status}: {body}"),
+            )
+            .await;
+        }
+        Err(other) => {
+            return stream_error(
+                &s,
+                trace,
+                started,
+                StatusCode::BAD_GATEWAY,
+                "coordinator_unreachable",
+                other.to_string(),
+            )
+            .await;
+        }
     };
 
     let chosen = resp_json
@@ -542,10 +556,7 @@ async fn finalize_error(
 /// just won't appear in the admin UI. Logged at warn level so an operator
 /// notices a sustained outage in the openai-api docker logs.
 async fn flush_log(s: &ApiState, trace: &RequestTrace, started: Instant) {
-    let Some(mgmt) = s.mgmt_url.as_deref() else {
-        return;
-    };
-    let Some(token) = s.mgmt_token.as_deref() else {
+    let Some(mgmt) = s.mgmt.as_ref() else {
         return;
     };
     let body = serde_json::json!({
@@ -563,43 +574,24 @@ async fn flush_log(s: &ApiState, trace: &RequestTrace, started: Instant) {
         "error_type":        trace.error_type,
         "error_message":     trace.error_message,
     });
-    let url = format!("{mgmt}/api/v1/inference/log");
-    if let Err(e) = s
-        .http
-        .post(&url)
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await
-    {
+    if let Err(e) = mgmt.log_inference(&body).await {
         tracing::warn!(error = %e, "inference log write to mgmt failed");
     }
 }
 
 async fn probe_cluster_size(s: &ApiState) -> usize {
-    let url = format!("{}/nodes", s.coordinator_url);
-    match s.http.get(&url).send().await {
-        Ok(r) if r.status().is_success() => {
-            r.json::<serde_json::Value>()
-                .await
-                .ok()
-                .and_then(|v| v.get("count").and_then(|n| n.as_u64()))
-                .map(|n| n as usize)
-                .unwrap_or(0)
-        }
-        _ => 0,
-    }
+    s.coord
+        .list_nodes()
+        .await
+        .ok()
+        .and_then(|v| v.get("count").and_then(|n| n.as_u64()))
+        .map(|n| n as usize)
+        .unwrap_or(0)
 }
 
 /// Returns the model registry rows from mgmt-backend, or `None` if mgmt isn't
 /// configured / unreachable. Caller falls back to the synthesised "auto" entry.
 async fn fetch_registry(s: &ApiState) -> Option<Vec<serde_json::Value>> {
-    let mgmt = s.mgmt_url.as_deref()?;
-    let token = s.mgmt_token.as_deref()?;
-    let url = format!("{mgmt}/api/v1/models");
-    let res = s.http.get(url).bearer_auth(token).send().await.ok()?;
-    if !res.status().is_success() {
-        return None;
-    }
-    res.json::<Vec<serde_json::Value>>().await.ok()
+    let mgmt = s.mgmt.as_ref()?;
+    mgmt.list_models().await.ok()
 }

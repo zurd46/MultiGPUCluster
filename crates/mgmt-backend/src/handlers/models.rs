@@ -299,14 +299,13 @@ pub async fn load(
     // Forward to coordinator's load_model proxy. The coordinator knows which
     // IP+port the worker's control endpoint is on (it sees them on each
     // heartbeat); it does the actual TCP hop.
+    //
     // node_ids are UUIDs (see worker/src/identity.rs). Reject anything else
-    // before stitching it into a URL path — keeps us out of percent-encoding
-    // territory and rejects obvious injection attempts.
+    // before letting it through — keeps us out of percent-encoding territory
+    // and rejects obvious injection attempts at the path component.
     if !q.node_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(ApiError::BadRequest("node_id must be a UUID".into()));
     }
-    let coord = s.coordinator_endpoint.trim_end_matches('/');
-    let url = format!("{}/nodes/{}/load_model", coord, q.node_id);
     let body = json!({
         "model_id":       id,
         "hf_repo":        model.hf_repo,
@@ -314,23 +313,13 @@ pub async fn load(
         "hf_token":       token,
         "local_filename": local_filename,
     });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(ApiError::internal)?;
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| ApiError::Internal(format!("coordinator unreachable: {e}")))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        return Err(ApiError::Internal(format!(
-            "coordinator rejected load (status={status}): {text}"
-        )));
-    }
+    let coord = gpucluster_common::clients::CoordClient::new(s.coordinator_endpoint.clone());
+    coord.load_model(&q.node_id, &body).await.map_err(|e| match e {
+        gpucluster_common::clients::ClientError::Upstream { status, body, .. } => {
+            ApiError::Internal(format!("coordinator rejected load (status={status}): {body}"))
+        }
+        other => ApiError::Internal(format!("coordinator unreachable: {other}")),
+    })?;
 
     // Optimistic UI: flip status + remember which node we asked. Worker
     // heartbeat will overwrite these once the download completes (or fails).

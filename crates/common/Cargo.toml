@@ -12,3 +12,6 @@ anyhow.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+
+# clients module — typed HTTP wrappers for cluster-internal calls.
+reqwest.workspace = true

@@ -27,6 +27,7 @@
 //! The reconciler never deletes rows and never touches `disabled`/`error`.
 
 use chrono::{DateTime, Utc};
+use gpucluster_common::clients::CoordClient;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -43,34 +44,22 @@ pub fn spawn(pool: PgPool, coordinator_endpoint: String) {
         return;
     }
     tokio::spawn(async move {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let coord = CoordClient::new(coordinator_endpoint);
         let mut tick = tokio::time::interval(RECONCILE_PERIOD);
         // Discard the immediate first tick so we don't race with mgmt-backend
         // startup (the coordinator may not be reachable yet on cold boot).
         tick.tick().await;
         loop {
             tick.tick().await;
-            if let Err(e) = reconcile_once(&client, &pool, &coordinator_endpoint).await {
+            if let Err(e) = reconcile_once(&coord, &pool).await {
                 tracing::warn!(error = %e, "reconcile pass failed");
             }
         }
     });
 }
 
-async fn reconcile_once(
-    client: &reqwest::Client,
-    pool: &PgPool,
-    coordinator_endpoint: &str,
-) -> anyhow::Result<()> {
-    let url = format!("{}/nodes", coordinator_endpoint.trim_end_matches('/'));
-    let resp = client.get(&url).send().await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("coordinator /nodes returned {}", resp.status());
-    }
-    let body: serde_json::Value = resp.json().await?;
+async fn reconcile_once(coord: &CoordClient, pool: &PgPool) -> anyhow::Result<()> {
+    let body = coord.list_nodes().await?;
     let nodes = body
         .get("nodes")
         .and_then(|v| v.as_array())

@@ -155,7 +155,7 @@ async fn eligible_nodes(State(reg): State<Registry>) -> Json<Value> {
                 "device_name":     e.info.os.as_ref().map(|o| o.device_name.clone()),
                 "wg_ip":           e.info.network.as_ref().map(|n| n.wg_ip.clone()),
                 "public_ip":       e.current_public_ip,
-                "rpc_port":        50052,
+                "rpc_port":        gpucluster_common::ports::WORKER_RPC,
                 "inference_url":   inference_url,
                 "gpu": primary.map(|g| json!({
                     "name":         g.name,
@@ -302,36 +302,42 @@ async fn load_model_proxy(
         format!("http://{port_part}/control/load_model")
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "client_build_failed", "message": e.to_string() }))))?;
-
-    match client.post(&url).json(&body).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            let json = resp.json::<Value>().await.unwrap_or_else(|e| {
-                json!({ "error": "worker_returned_invalid_json", "message": e.to_string() })
-            });
-            if status.is_success() {
-                tracing::info!(%id, %url, "load_model dispatched to worker");
-                Ok(Json(json))
-            } else {
-                Err((StatusCode::BAD_GATEWAY,
-                    Json(json!({
-                        "error": "worker_rejected",
-                        "worker_status": status.as_u16(),
-                        "worker_body": json,
-                    }))))
-            }
+    // The URL we built ends with `/control/load_model`, but
+    // `WorkerControlClient::load_model` appends that suffix itself. Strip
+    // it so the client builds the same final URL without us double-encoding
+    // the path.
+    let base_url = url
+        .strip_suffix("/control/load_model")
+        .unwrap_or(&url)
+        .to_string();
+    let client = gpucluster_common::clients::WorkerControlClient::new(base_url);
+    match client.load_model(&body).await {
+        Ok(json) => {
+            tracing::info!(%id, %url, "load_model dispatched to worker");
+            Ok(Json(json))
         }
-        Err(e) => Err((StatusCode::BAD_GATEWAY,
+        Err(gpucluster_common::clients::ClientError::Upstream { status, body, .. }) => {
+            // Forward the worker's own response body (parsed if it's valid
+            // JSON, otherwise raw text wrapped). Lets the admin UI surface
+            // whatever the worker said about why it rejected.
+            let parsed = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
+            Err((
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "error":         "worker_rejected",
+                    "worker_status": status,
+                    "worker_body":   parsed,
+                })),
+            ))
+        }
+        Err(e) => Err((
+            StatusCode::BAD_GATEWAY,
             Json(json!({
-                "error": "worker_unreachable",
-                "url":   url,
+                "error":   "worker_unreachable",
+                "url":     url,
                 "message": e.to_string(),
-            })))),
+            })),
+        )),
     }
 }
 

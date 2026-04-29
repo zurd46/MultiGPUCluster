@@ -29,7 +29,7 @@ pub async fn run(cfg: WorkerConfig) -> Result<()> {
     // Failure here is non-fatal: a host with no GPU still enrolls so it can
     // appear in the dashboard, but stays ineligible for inference work.
     let backend = rpc_backend::RpcBackend::from_inventory(&info.gpus);
-    let _rpc = match rpc_backend::RpcServer::spawn(backend, 50052) {
+    let _rpc = match rpc_backend::RpcServer::spawn(backend, gpucluster_common::ports::WORKER_RPC) {
         Ok(s) => Some(s),
         Err(e) => {
             tracing::warn!(error = %e, "rpc-server-ext failed to start; node stays inference-ineligible at the RPC layer");

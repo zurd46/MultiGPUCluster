@@ -28,7 +28,9 @@ use tokio::sync::Mutex;
 
 /// Default port for the worker-local llama-server. Distinct from the
 /// `rpc-server-ext` port (50052) so both can coexist on the same host.
-pub const DEFAULT_INFERENCE_PORT: u16 = 50053;
+/// Re-export of [`gpucluster_common::ports::WORKER_INFERENCE`] to keep
+/// existing in-crate callers (`agent.rs`) working without churn.
+pub const DEFAULT_INFERENCE_PORT: u16 = gpucluster_common::ports::WORKER_INFERENCE;
 
 /// Possible binary names — `llama-server` is the upstream target. We also
 /// look for `llama-cpp-server` as a fall-through for distros that rename it.
