@@ -1,0 +1,65 @@
+# Headscale config — minimal viable for the cluster's WireGuard mesh.
+# Bring up with:  docker compose --profile mesh up -d wg-hub
+#
+# Production: replace `server_url` with your real domain, generate a strong
+# `noise.private_key`, point `tls_cert_path`/`tls_key_path` at Caddy-issued
+# files, and front the headscale port via Caddy too. The dev config below
+# uses HTTP on a publicly-bound port — safe only on a trusted LAN.
+
+server_url:        http://0.0.0.0:8080
+listen_addr:       0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+
+# IPv4-only mesh subnet — every worker gets a stable address here. The
+# coordinator's `/nodes/eligible` already prefers `wg_ip` over the
+# socket-observed public IP, so once a worker shows up with one this
+# replaces the `host.docker.internal` escape hatch.
+prefix_v4: 10.42.0.0/16
+prefix_v6: ""
+
+private_key_path:  /var/lib/headscale/private.key
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+# Embedded SQLite store — fine for thousands of nodes, zero ops cost.
+# Switch to Postgres when the operator wants single-pane-of-glass backups.
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+# DERP: Headscale's relay layer for nodes that can't UDP-direct. We embed
+# the DERP map so a worker behind a strict NAT still has a path home.
+derp:
+  server:
+    enabled: false       # turn on once you have a server_url + cert
+    region_id: 999
+    region_code: cluster
+    region_name: ClusterRelay
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: true
+  update_frequency: 24h
+
+# How long an unregistered key remains valid (the cluster issues one-time
+# pre-auth keys via the mgmt-backend's /enroll path; longer than the
+# enrollment-token TTL, so a worker has time to actually start `wg-quick`).
+ephemeral_node_inactivity_timeout: 30m
+node_update_check_interval: 10s
+
+# DNS off; mesh peers reach each other by `wg_ip` (10.42.x.y). The Caddy
+# layer keeps the public-side hostnames.
+dns:
+  override_local_dns: false
+  magic_dns: false
+  base_domain: cluster.local
+  nameservers:
+    global: []
+
+log:
+  format: text
+  level:  info
+
+# OIDC etc. left disabled — workers authenticate with single-use pre-auth
+# keys minted by the mgmt-backend during enrollment.

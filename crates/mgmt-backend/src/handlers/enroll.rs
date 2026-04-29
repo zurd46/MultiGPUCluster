@@ -198,6 +198,12 @@ pub async fn complete(
         "node enrolled"
     );
 
+    // Optional: hand the worker a WireGuard config (pre-auth key + server)
+    // when the operator has wired up Headscale. Falls back to no-WG when
+    // headscale is not configured — `INFERENCE_ADVERTISED_HOST` then stays
+    // the dev workaround.
+    let wg_config_ini = build_wireguard_config().await;
+
     Ok(Json(EnrollResponse {
         node_id: node_id.to_string(),
         client_cert_pem: issued.cert_pem,
@@ -205,7 +211,45 @@ pub async fn complete(
         ca_chain_pem: s.ca.cert_pem(),
         coordinator_endpoint: s.coordinator_endpoint.clone(),
         cert_expires_at: cert_expires.to_rfc3339(),
+        wg_config_ini,
     }))
+}
+
+/// Returns a join-config blob for the cluster's Headscale mesh when the
+/// operator has wired it up (`HEADSCALE_URL` + `HEADSCALE_API_KEY` env), or
+/// `None` otherwise. Best-effort: if Headscale is down we still return a
+/// successful enrollment, just without WG. The coordinator's
+/// `INFERENCE_ADVERTISED_HOST` escape hatch keeps dev usable.
+async fn build_wireguard_config() -> Option<String> {
+    let headscale_url = std::env::var("HEADSCALE_URL").ok().filter(|s| !s.is_empty())?;
+    let api_key = std::env::var("HEADSCALE_API_KEY").ok().filter(|s| !s.is_empty())?;
+    let user = std::env::var("HEADSCALE_USER").unwrap_or_else(|_| "cluster".into());
+
+    let url = format!("{}/api/v1/preauthkey", headscale_url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "user": user, "reusable": false, "ephemeral": false, "expiration": "1h",
+    });
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let resp = http.post(&url).bearer_auth(&api_key).json(&body).send().await.ok()?;
+    if !resp.status().is_success() {
+        tracing::warn!(status = %resp.status(), "headscale preauth key request failed");
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    let key = v.get("preAuthKey").and_then(|p| p.get("key")).and_then(|x| x.as_str())?;
+
+    Some(format!(
+        "# gpucluster Headscale join — bootstrapper writes this to a state\n\
+         # file the worker's `tailscale up` reads. Real WG keys are managed\n\
+         # by tailscaled.\n\
+         ServerURL = {url}\n\
+         AuthKey   = {key}\n\
+         User      = {user}\n",
+        url = headscale_url.trim_end_matches('/'),
+    ))
 }
 
 /// Extract the originating client IP from X-Forwarded-For (left-most entry)

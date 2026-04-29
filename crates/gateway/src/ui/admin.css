@@ -197,6 +197,9 @@ main {
   flex-direction: column;
   gap: 18px;
 }
+/* Tied specifically to .route so it beats `.route { display: flex }`,
+   which otherwise wins over the UA's `[hidden] { display: none }`. */
+.route[hidden] { display: none; }
 
 /* ====================== quickstart ====================== */
 .quickstart {

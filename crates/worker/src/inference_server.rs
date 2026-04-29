@@ -112,8 +112,30 @@ impl Supervisor {
     /// the previous model_id/path cleared (so heartbeats stop advertising
     /// inference until a retry succeeds).
     pub fn switch_to(&mut self, model_id: String, path: String) -> Result<()> {
+        self.switch_inner(model_id, path, &[])
+    }
+
+    /// Multi-node variant: starts llama-server with `--rpc peer1,peer2,...`
+    /// so layers fan out across each peer's `rpc-server` listener. The
+    /// primary still does the model load and serves the OpenAI HTTP API;
+    /// peers contribute GPU + VRAM only. Order matters: llama.cpp assigns
+    /// layers in the listed order, smallest VRAM last is usually best.
+    pub fn switch_to_multi(
+        &mut self,
+        model_id: String,
+        path: String,
+        peers: Vec<String>,
+    ) -> Result<()> {
+        self.switch_inner(model_id, path, &peers)
+    }
+
+    fn switch_inner(
+        &mut self,
+        model_id: String,
+        path: String,
+        peers: &[String],
+    ) -> Result<()> {
         // Tear down the old child first so the new one can claim the port.
-        // We don't wait long — the kernel will reap.
         if let Some(mut old) = self.child.take() {
             let _ = old.kill();
             let _ = old.wait();
@@ -122,7 +144,7 @@ impl Supervisor {
         self.model_id = None;
         self.model_path = None;
 
-        match self.spawn_llama_server(&path) {
+        match self.spawn_llama_server_with_peers(&path, peers) {
             Ok(()) => {
                 self.model_path = Some(path);
                 self.model_id = Some(model_id);
@@ -133,8 +155,16 @@ impl Supervisor {
     }
 
     /// Spawn `llama-server` on the supervisor's port, pointing at `path`.
-    /// On success, stores the child in `self.child`.
+    /// On success, stores the child in `self.child`. Single-node convenience
+    /// wrapper around `spawn_llama_server_with_peers([])`.
     fn spawn_llama_server(&mut self, path: &str) -> Result<()> {
+        self.spawn_llama_server_with_peers(path, &[])
+    }
+
+    /// Same as `spawn_llama_server` but adds `--rpc <peer1>,<peer2>,...` when
+    /// `peers` is non-empty. Each peer must already be running an
+    /// `rpc-server` (upstream llama.cpp tools/rpc) on its advertised port.
+    fn spawn_llama_server_with_peers(&mut self, path: &str, peers: &[String]) -> Result<()> {
         if !Path::new(path).is_file() {
             return Err(anyhow!("model path does not exist: {path}"));
         }
@@ -155,6 +185,16 @@ impl Supervisor {
            )
            .arg("--jinja");
 
+        if !peers.is_empty() {
+            // llama.cpp's RPC backend takes a comma-separated peer list. Each
+            // peer is `host:port` (no scheme). The local GPU still serves
+            // some layers — peers contribute additional VRAM-equivalent
+            // capacity which llama.cpp distributes layers over.
+            let joined = peers.join(",");
+            cmd.arg("--rpc").arg(&joined);
+            tracing::info!(rpc_peers = %joined, "llama-server multi-node mode");
+        }
+
         let child = cmd
             .spawn()
             .with_context(|| format!("spawn {}", bin.display()))?;
@@ -164,6 +204,7 @@ impl Supervisor {
             pid = child.id(),
             bin = %bin.display(),
             model_path = %path,
+            peer_count = peers.len(),
             "llama-server started"
         );
         self.child = Some(child);

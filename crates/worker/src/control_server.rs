@@ -44,6 +44,14 @@ struct LoadModelReq {
     /// `hf_file` when empty.
     #[serde(default)]
     local_filename: String,
+    /// Multi-node tensor-parallel peers. When non-empty, the worker becomes
+    /// the *primary* for this model: it loads the GGUF locally, then spawns
+    /// `llama-server --rpc <peer1>,<peer2>,...` so layers spill onto the
+    /// peers' `rpc-server-ext` listeners. Each entry is a `host:port` string
+    /// the primary can reach (`host.docker.internal:50052` in dev, the WG IP
+    /// `10.42.x.y:50052` in production).
+    #[serde(default)]
+    peers: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -154,7 +162,22 @@ async fn load_model(
             }
         };
         let mut guard = sup.lock().await;
-        if let Err(e) = guard.switch_to(req.model_id.clone(), path_str) {
+        let switch = if req.peers.is_empty() {
+            // Single-node load — current behaviour, llama-server with full
+            // model on the local GPU.
+            guard.switch_to(req.model_id.clone(), path_str)
+        } else {
+            // Multi-node tensor-parallel: primary worker drives, peers are
+            // additional ggml RPC backends llama-server splits layers onto.
+            tracing::info!(
+                model_id = %req.model_id,
+                peer_count = req.peers.len(),
+                peers = ?req.peers,
+                "starting llama-server in multi-node mode",
+            );
+            guard.switch_to_multi(req.model_id.clone(), path_str, req.peers.clone())
+        };
+        if let Err(e) = switch {
             tracing::error!(error = %e, model_id = %req.model_id, "llama-server switch failed");
         }
     });
