@@ -51,6 +51,10 @@ pub struct EnrollResponse {
     pub ca_chain_pem: String,
     pub coordinator_endpoint: String,
     pub cert_expires_at: String,
+    /// Optional Headscale join blob — populated when the operator wired up
+    /// the WireGuard mesh; bootstrapper writes it to disk and `tailscale up`s.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wg_config_ini: Option<String>,
 }
 
 pub async fn complete(
