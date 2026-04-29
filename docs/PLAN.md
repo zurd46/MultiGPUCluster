@@ -65,16 +65,18 @@ Heterogene Clients (Windows/Linux mit NVIDIA + macOS mit Apple Silicon) **an ver
 | **Datastores** | PostgreSQL, Redis, S3/MinIO | Metadaten, Cache, Model-/Checkpoint-Storage |
 | **Web-UI (Admin)** | SvelteKit / Next.js | Cluster-Verwaltung, Monitoring |
 
-### Clients (Container, laufen bei den Usern)
+### Clients (Container *oder* native Binary, laufen bei den Usern)
 
 | Komponente | Sprache | Zweck |
 |---|---|---|
-| **Worker Agent** | Rust + NVML | GPU-Discovery, Heartbeat, Job-Execution |
-| **Inference-Backend** | C++/CUDA (llama.cpp Fork) | Verteilte Inferenz mit RPC-Backend |
-| **Fine-Tuning-Backend** | C++/CUDA + Rust (candle) | LoRA/QLoRA, FSDP, DDP |
-| **NCCL-Wrapper** | C++ + Rust FFI | Tensor-Sync zwischen GPUs |
+| **Worker Agent** | Rust + NVML / Metal-Discovery | GPU-Discovery (CUDA + Apple Silicon), Heartbeat, Job-Execution |
+| **Inference-Backend** | C++ (llama.cpp Fork) | Verteilte Inferenz; ggml-cuda *oder* ggml-metal je nach Host |
+| **Fine-Tuning-Backend** | C++/CUDA + Rust (candle) | LoRA/QLoRA, FSDP, DDP — **CUDA-only** (Metal kommt in Phase 6) |
+| **NCCL-Wrapper** | C++ + Rust FFI | Tensor-Sync zwischen NVIDIA-GPUs |
 | **WireGuard-Client** | wireguard-go / kernel | VPN-Tunnel zum Backend |
-| **Bootstrapper** | Rust (native Binary) | Host-Setup, Container-Lifecycle, Enrollment |
+| **Bootstrapper** | Rust (native Binary) | Host-Setup, Container- *oder* Native-Worker-Lifecycle, Enrollment |
+
+**Cross-vendor Inventory:** Jede `GpuInfo`-Message trägt ein `GpuBackend`-Enum (`CUDA`/`METAL`/`ROCM`/`VULKAN`) plus `unified_memory`-Flag und `gpu_core_count`. Apple Silicon meldet `architecture = "Apple-M3-Max"` o.ä. statt einer Compute-Capability — der Scheduler bucketet entsprechend (`metal-Apple-M3-Max` vs `cuda-Ampere-8.0`).
 
 **Warum Rust:** Memory-Safety + Performance, ideal für Gateway/Coordinator (kein GC-Stutter).
 **Warum C++:** CUDA-Kernels, NCCL, llama.cpp-Integration sind nativ C++.
