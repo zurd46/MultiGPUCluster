@@ -26,7 +26,7 @@ impl CoordinatorService for CoordSvc {
 
         let mut info = info;
         info.node_id = id.clone();
-        self.registry.upsert(info, None, None);
+        self.registry.upsert(info, None, None, None, None);
 
         Ok(Response::new(RegisterResponse {
             assigned_id: id,

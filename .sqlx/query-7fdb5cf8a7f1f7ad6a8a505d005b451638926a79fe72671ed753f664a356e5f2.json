@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT value FROM cluster_settings WHERE key = 'huggingface_api_token'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "value",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7fdb5cf8a7f1f7ad6a8a505d005b451638926a79fe72671ed753f664a356e5f2"
+}

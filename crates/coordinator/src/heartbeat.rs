@@ -15,7 +15,13 @@ pub async fn watchdog(reg: Registry) {
                 tracing::warn!(node_id = %entry.info.node_id, "node marked offline");
                 let mut info = entry.info.clone();
                 info.status = pb::NodeStatus::Offline as i32;
-                reg.upsert(info, entry.current_public_ip, entry.inference_endpoint);
+                reg.upsert(
+                    info,
+                    entry.current_public_ip,
+                    entry.inference_endpoint,
+                    entry.control_endpoint,
+                    entry.current_model,
+                );
             }
         }
     }

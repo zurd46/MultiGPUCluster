@@ -14,6 +14,14 @@ pub struct NodeEntry {
     /// a full URL: `http://<public_ip>:50053`. `None` for nodes that don't
     /// have a model loaded.
     pub inference_endpoint: Option<String>,
+    /// Worker-advertised port (e.g. `":50054"`) for the control plane —
+    /// receives `load_model` and friends. Same IP-pairing dance as
+    /// `inference_endpoint`. `None` for legacy workers.
+    pub control_endpoint: Option<String>,
+    /// id of the model currently loaded on this worker, as reported by its
+    /// heartbeat. Empty / None means "no model loaded yet" (workers that
+    /// never received a load_model RPC, or that started with `MODEL_PATH=`).
+    pub current_model: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -29,6 +37,8 @@ impl Registry {
         info: pb::NodeInfo,
         public_ip: Option<String>,
         inference_endpoint: Option<String>,
+        control_endpoint: Option<String>,
+        current_model: Option<String>,
     ) {
         let entry = NodeEntry {
             status: pb::NodeStatus::try_from(info.status).unwrap_or(pb::NodeStatus::Unspecified),
@@ -36,6 +46,8 @@ impl Registry {
             last_heartbeat: Utc::now(),
             current_public_ip: public_ip,
             inference_endpoint,
+            control_endpoint,
+            current_model,
         };
         self.inner.insert(info.node_id, entry);
     }

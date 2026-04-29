@@ -1,0 +1,89 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE models SET\n              display_name   = COALESCE($2, display_name),\n              description    = COALESCE($3, description),\n              status         = COALESCE($4, status),\n              is_default     = COALESCE($5, is_default),\n              hf_repo        = COALESCE($6, hf_repo),\n              hf_file        = COALESCE($7, hf_file),\n              local_filename = COALESCE($8, local_filename),\n              updated_at     = now()\n           WHERE id = $1\n           RETURNING id, display_name, description, status, is_default,\n                     hf_repo, hf_file, local_filename, loaded_on_node,\n                     created_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "is_default",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "hf_repo",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "hf_file",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "local_filename",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "loaded_on_node",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d788c04495afed8956b876096b353bfcc1f874ec610d0f291f54c00b5b805173"
+}

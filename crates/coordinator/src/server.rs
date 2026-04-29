@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::{
-    extract::{ConnectInfo, State},
+    extract::{ConnectInfo, Path, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -43,6 +43,11 @@ async fn run_http(bind: &str, reg: Registry) -> Result<()> {
         // currently serve an inference request (status=online, GPU present,
         // recent heartbeat). Phase 2 scheduler reads this.
         .route("/nodes/eligible", get(eligible_nodes))
+        // POST /nodes/{id}/load_model — control-plane proxy. mgmt-backend
+        // calls this with `{model_id, hf_repo, hf_file, hf_token, …}`; we
+        // look up the worker's control_endpoint from the registry and
+        // forward the JSON unchanged.
+        .route("/nodes/{id}/load_model", post(load_model_proxy))
         .with_state(reg);
 
     let addr: SocketAddr = bind.parse()?;
@@ -72,6 +77,14 @@ async fn list_nodes(State(reg): State<Registry>) -> Json<Value> {
             // Dashboard table reads `id`; keep `node_id` for the canonical proto
             // name. One row, two keys — costs nothing, avoids touching admin_ui.
             map.insert("id".into(), Value::String(e.info.node_id.clone()));
+            // Advertise the loaded model + control endpoint so the admin UI
+            // can show a "Load model" button only for nodes that can accept
+            // one (those with a control endpoint), and pre-disable it for
+            // nodes already running the requested model.
+            map.insert("current_model".into(),
+                e.current_model.clone().map(Value::String).unwrap_or(Value::Null));
+            map.insert("control_endpoint".into(),
+                e.control_endpoint.clone().map(Value::String).unwrap_or(Value::Null));
         }
         obj
     }).collect();
@@ -186,10 +199,94 @@ async fn report_node(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(String::from);
+    let control_endpoint = body
+        .get("control_endpoint")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let current_model = body
+        .get("current_model")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
     let has_inference = inference_endpoint.is_some();
-    reg.upsert(info, public_ip, inference_endpoint);
+    reg.upsert(info, public_ip, inference_endpoint, control_endpoint, current_model);
     tracing::info!(%id, %device, gpus = gpu_count, inference = has_inference, "node inventory updated");
     Ok(Json(json!({ "ok": true, "node_id": id })))
+}
+
+/// POST /nodes/{id}/load_model — proxy from mgmt-backend to the worker's
+/// control endpoint. The body is forwarded verbatim. We deliberately don't
+/// unmarshal/remarshal it: the worker owns the schema, and a pass-through
+/// keeps the coordinator out of the upgrade dance every time we add a field.
+///
+/// Returns:
+///   * 502 if the worker is unknown, never advertised a control endpoint,
+///     or doesn't have a public IP yet (heartbeat hasn't landed).
+///   * Whatever status the worker returns otherwise.
+async fn load_model_proxy(
+    State(reg): State<Registry>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let entry = reg.get(&id).ok_or_else(|| {
+        (StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "unknown_node", "node_id": id.clone() })))
+    })?;
+
+    // Same IP-pairing rules as inference_url: prefer wg_ip, fall back to the
+    // socket-observed public_ip. control_endpoint carries `:port`.
+    let wg_ip = entry
+        .info
+        .network
+        .as_ref()
+        .map(|n| n.wg_ip.clone())
+        .filter(|s| !s.is_empty());
+    let host = wg_ip.or(entry.current_public_ip.clone()).ok_or_else(|| {
+        (StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "node_has_no_routable_ip", "node_id": id.clone() })))
+    })?;
+    let port_part = entry.control_endpoint.clone().ok_or_else(|| {
+        (StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error":   "node_has_no_control_endpoint",
+                "node_id": id.clone(),
+                "hint":    "worker may be running an older version that doesn't expose /control",
+            })))
+    })?;
+    let url = format!("http://{host}{port_part}/control/load_model");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "client_build_failed", "message": e.to_string() }))))?;
+
+    match client.post(&url).json(&body).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let json = resp.json::<Value>().await.unwrap_or_else(|e| {
+                json!({ "error": "worker_returned_invalid_json", "message": e.to_string() })
+            });
+            if status.is_success() {
+                tracing::info!(%id, %url, "load_model dispatched to worker");
+                Ok(Json(json))
+            } else {
+                Err((StatusCode::BAD_GATEWAY,
+                    Json(json!({
+                        "error": "worker_rejected",
+                        "worker_status": status.as_u16(),
+                        "worker_body": json,
+                    }))))
+            }
+        }
+        Err(e) => Err((StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": "worker_unreachable",
+                "url":   url,
+                "message": e.to_string(),
+            })))),
+    }
 }
 
 /// Hand-rolled inverse of `inventory::to_json`. We avoid pulling serde-derive

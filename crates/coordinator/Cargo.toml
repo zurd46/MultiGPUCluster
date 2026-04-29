@@ -39,3 +39,7 @@ uuid.workspace = true
 chrono.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
+
+# Used by /nodes/{id}/load_model to proxy admin requests onto the worker's
+# control endpoint.
+reqwest.workspace = true

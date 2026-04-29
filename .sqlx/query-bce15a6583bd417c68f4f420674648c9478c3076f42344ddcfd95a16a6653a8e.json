@@ -1,0 +1,89 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO models (id, display_name, description, status, is_default,\n                                hf_repo, hf_file, local_filename)\n           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n           RETURNING id, display_name, description, status, is_default,\n                     hf_repo, hf_file, local_filename, loaded_on_node,\n                     created_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "is_default",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "hf_repo",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "hf_file",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "local_filename",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "loaded_on_node",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "bce15a6583bd417c68f4f420674648c9478c3076f42344ddcfd95a16a6653a8e"
+}

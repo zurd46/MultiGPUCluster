@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE models SET\n              display_name = COALESCE($2, display_name),\n              description  = COALESCE($3, description),\n              status       = COALESCE($4, status),\n              is_default   = COALESCE($5, is_default),\n              updated_at   = now()\n           WHERE id = $1\n           RETURNING id, display_name, description, status, is_default, created_at, updated_at",
+  "query": "SELECT id, display_name, description, status, is_default,\n                  hf_repo, hf_file, local_filename, loaded_on_node,\n                  created_at, updated_at\n           FROM models\n           ORDER BY is_default DESC, created_at DESC",
   "describe": {
     "columns": [
       {
@@ -30,25 +30,43 @@
       },
       {
         "ordinal": 5,
+        "name": "hf_repo",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "hf_file",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "local_filename",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "loaded_on_node",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 6,
+        "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": [
-        "Text",
-        "Text",
-        "Text",
-        "Text",
-        "Bool"
-      ]
+      "Left": []
     },
     "nullable": [
+      false,
+      false,
+      false,
+      false,
       false,
       false,
       false,
@@ -58,5 +76,5 @@
       false
     ]
   },
-  "hash": "07238a10dd2271f582d1bec604c53c32d849f37568166822bbab84d609e46da0"
+  "hash": "975c4af672ace950c64e182620ffca60a2eb6800cd9cd4e8358dbbd6183489b5"
 }

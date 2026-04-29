@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, hf_repo, hf_file, local_filename\n           FROM models WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "hf_repo",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "hf_file",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "local_filename",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "dec5ed39959eecca4edb929f70a655e1e2d10db42cbe86c2c13a17d0e0ca9100"
+}

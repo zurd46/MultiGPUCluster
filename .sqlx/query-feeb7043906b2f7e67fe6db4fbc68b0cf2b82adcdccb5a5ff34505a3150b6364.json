@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE models\n              SET status = 'downloading',\n                  loaded_on_node = $2,\n                  updated_at = now()\n            WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "feeb7043906b2f7e67fe6db4fbc68b0cf2b82adcdccb5a5ff34505a3150b6364"
+}
