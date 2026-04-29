@@ -5,6 +5,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 mod enroll;
 mod service;
 mod docker;
+mod native;
 mod preflight;
 mod state;
 

@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 gpucluster-common.workspace = true
 gpucluster-sysinfo.workspace = true
+gpucluster-proto.workspace = true
 
 tokio.workspace = true
 serde.workspace = true

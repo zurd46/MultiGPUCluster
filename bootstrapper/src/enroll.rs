@@ -47,6 +47,13 @@ pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Resu
         "driver_version":    g.driver_version,
         "cuda_version":      g.cuda_version,
         "vbios_version":     g.vbios_version,
+        // Cross-vendor fields — let the backend distinguish CUDA workers from
+        // Apple Silicon (Metal) workers without having to infer it from the
+        // architecture string.
+        "backend":           backend_label(g.backend),
+        "unified_memory":    g.unified_memory,
+        "gpu_core_count":    g.gpu_core_count,
+        "metal_family":      g.metal_family,
     })).collect::<Vec<_>>().into();
 
     let payload = EnrollPayload {
@@ -86,6 +93,17 @@ pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Resu
 
     tracing::info!("enrollment successful — identity persisted");
     Ok(())
+}
+
+fn backend_label(backend: i32) -> &'static str {
+    use gpucluster_proto::node as pb;
+    match pb::GpuBackend::try_from(backend).unwrap_or(pb::GpuBackend::Unspecified) {
+        pb::GpuBackend::Cuda    => "cuda",
+        pb::GpuBackend::Metal   => "metal",
+        pb::GpuBackend::Rocm    => "rocm",
+        pb::GpuBackend::Vulkan  => "vulkan",
+        pb::GpuBackend::Unspecified => "unspecified",
+    }
 }
 
 /// Generates a fresh Ed25519 keypair using the system RNG (via ring).

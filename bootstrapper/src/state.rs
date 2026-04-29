@@ -18,6 +18,10 @@ pub fn data_dir() -> PathBuf {
     }
     if cfg!(windows) {
         PathBuf::from(r"C:\ProgramData\gpucluster")
+    } else if cfg!(target_os = "macos") {
+        // macOS workers run natively (Metal can't be passed into a container),
+        // so we follow the system-daemon convention.
+        PathBuf::from("/Library/Application Support/gpucluster")
     } else {
         PathBuf::from("/var/lib/gpucluster")
     }
