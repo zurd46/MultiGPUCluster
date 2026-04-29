@@ -44,6 +44,13 @@ pub async fn put(
         "default_model",
         "rate_limit_rpm",
         "max_tokens_default",
+        // Hugging Face access token used by workers when downloading gated/private
+        // GGUFs. Empty string is a valid value: it disables HF auth and only
+        // public repos remain reachable. We store the raw token in JSONB rather
+        // than hashed because the worker needs the cleartext to call the Hub —
+        // mitigations: the field is admin-only (require_admin middleware on
+        // every read/write) and never logged.
+        "huggingface_api_token",
     ];
 
     let mut tx = s.pool.begin().await?;
@@ -61,10 +68,19 @@ pub async fn put(
         .execute(&mut *tx)
         .await?;
     }
+    // Redact secrets before writing them to the audit log. The audit log is
+    // surfaced verbatim by GET /api/v1/audit, so any value placed here is
+    // recoverable by anyone with admin access. Token-shaped fields get hashed
+    // out and only their presence is recorded.
+    let mut redacted = doc.0.clone();
+    if let Some(v) = redacted.get_mut("huggingface_api_token") {
+        let was_set = v.as_str().map(|s| !s.is_empty()).unwrap_or(false);
+        *v = Value::String(if was_set { "<redacted>".into() } else { "<cleared>".into() });
+    }
     sqlx::query!(
         "INSERT INTO audit_log (actor, action, resource, details)
          VALUES ('admin', 'SETTINGS_UPDATED', 'cluster_settings', $1::jsonb)",
-        Value::Object(doc.0.clone()),
+        Value::Object(redacted),
     )
     .execute(&mut *tx)
     .await
