@@ -29,17 +29,22 @@ pub fn detect() -> Result<Vec<pb::GpuInfo>> {
         };
 
         let mem = dev.memory_info().ok();
-        let cc = dev.cuda_compute_capability().ok();
+        let cc_pair: Option<(i32, i32)> = dev
+            .cuda_compute_capability()
+            .ok()
+            .map(|c| (c.major, c.minor));
         let pci = dev.pci_info().ok();
-        let arch = cc.map(|c| classify_arch(c.major, c.minor)).unwrap_or_default();
+        let arch = cc_pair
+            .map(|(maj, min)| classify_arch(maj, min))
+            .unwrap_or_default();
 
         out.push(pb::GpuInfo {
             index: i,
             uuid: dev.uuid().unwrap_or_default(),
             name: dev.name().unwrap_or_default(),
             architecture: arch.clone(),
-            compute_cap_major: cc.map(|c| c.major as u32).unwrap_or(0),
-            compute_cap_minor: cc.map(|c| c.minor as u32).unwrap_or(0),
+            compute_cap_major: cc_pair.map(|c| c.0 as u32).unwrap_or(0),
+            compute_cap_minor: cc_pair.map(|c| c.1 as u32).unwrap_or(0),
             vram_total_bytes: mem.as_ref().map(|m| m.total).unwrap_or(0),
             vram_free_bytes:  mem.as_ref().map(|m| m.free).unwrap_or(0),
             pci_bus_id: pci.map(|p| p.bus_id).unwrap_or_default(),
@@ -48,7 +53,7 @@ pub fn detect() -> Result<Vec<pb::GpuInfo>> {
             vbios_version: dev.vbios_version().unwrap_or_default(),
             power_limit_w: dev.power_management_limit().unwrap_or(0) / 1000,
             nvlink_present: false,
-            capability: Some(build_capability(&arch, cc.map(|c| (c.major, c.minor)), mem.as_ref().map(|m| m.total).unwrap_or(0))),
+            capability: Some(build_capability(&arch, cc_pair, mem.as_ref().map(|m| m.total).unwrap_or(0))),
             backend: pb::GpuBackend::Cuda as i32,
             unified_memory: false,
             gpu_core_count: 0,
