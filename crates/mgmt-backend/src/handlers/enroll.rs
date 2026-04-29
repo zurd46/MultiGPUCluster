@@ -116,7 +116,7 @@ pub async fn complete(
         req.hw_fingerprint,
         req.hostname,
         req.display_name.or(token_row.display_hint),
-        req.agent_version.unwrap_or_default(),
+        req.agent_version.clone().unwrap_or_default(),
         sha256_pem(&issued.cert_pem),
         cert_expires,
         public_ip,

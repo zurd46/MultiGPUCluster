@@ -41,6 +41,16 @@ message OsInfo {
   string arch      = 4;
 }
 
+// Backend a GPU is driven by — also determines which inference RPC server
+// the worker has to start (CUDA → ggml-cuda, Metal → ggml-metal).
+enum GpuBackend {
+  GPU_BACKEND_UNSPECIFIED = 0;
+  GPU_BACKEND_CUDA        = 1;  // NVIDIA + CUDA / NVML
+  GPU_BACKEND_METAL       = 2;  // Apple Silicon (M-series), unified memory
+  GPU_BACKEND_ROCM        = 3;  // AMD (future)
+  GPU_BACKEND_VULKAN      = 4;  // generic fallback (future)
+}
+
 message GpuInfo {
   uint32 index             = 1;
   string uuid              = 2;
@@ -57,6 +67,12 @@ message GpuInfo {
   uint32 power_limit_w     = 13;
   bool   nvlink_present    = 14;
   GpuCapabilityProfile capability = 15;
+
+  // Cross-vendor extensions (Phase 1 — Apple Silicon support).
+  GpuBackend backend       = 16;
+  bool   unified_memory    = 17;  // Apple Silicon: CPU+GPU share RAM
+  uint32 gpu_core_count    = 18;  // Apple GPU cores; 0 for NVIDIA (use SM count instead)
+  string metal_family      = 19;  // e.g. "Metal3", "Metal4" — empty for non-Metal
 }
 
 message GpuCapabilityProfile {
@@ -71,6 +87,10 @@ message GpuCapabilityProfile {
   bool   supports_fp4       = 9;
   bool   supports_int8_tc   = 10;
   BenchScore benchmark      = 11;
+
+  // Cross-vendor extensions.
+  GpuBackend backend        = 12;
+  bool   unified_memory     = 13;
 }
 
 message BenchScore {

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use axum::middleware as axmid;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use axum::http::StatusCode;
 use tower_http::{
@@ -10,10 +11,17 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{config::GatewayConfig, middleware as gw, routes};
+use crate::{config::GatewayConfig, middleware as gw, routes, state::GatewayState};
 
 pub async fn run(cfg: GatewayConfig) -> Result<()> {
-    let app = routes::build()
+    let state = Arc::new(GatewayState::new(
+        cfg.mgmt_backend_url.clone(),
+        cfg.coordinator_url.clone(),
+        cfg.openai_api_url.clone(),
+        cfg.admin_api_key.clone(),
+    ));
+
+    let app = routes::build(state)
         .layer(axmid::from_fn(gw::capture_public_ip))
         .layer(axmid::from_fn(gw::request_id))
         .layer(CorsLayer::permissive())

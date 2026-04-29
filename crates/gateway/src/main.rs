@@ -12,11 +12,14 @@ struct Args {
     #[arg(long, env = "MGMT_BACKEND_URL", default_value = "http://mgmt:7100")]
     mgmt_backend_url: String,
 
-    #[arg(long, env = "COORDINATOR_URL", default_value = "http://coordinator:7000")]
+    #[arg(long, env = "COORDINATOR_HTTP_URL", default_value = "http://coordinator:7001")]
     coordinator_url: String,
 
     #[arg(long, env = "OPENAI_API_URL", default_value = "http://openai-api:7200")]
     openai_api_url: String,
+
+    #[arg(long, env = "ADMIN_API_KEY")]
+    admin_api_key: Option<String>,
 
     #[arg(long, env = "TLS_CERT_PATH")]
     tls_cert: Option<String>,
@@ -42,6 +45,7 @@ async fn main() -> Result<()> {
         mgmt_backend_url: args.mgmt_backend_url,
         coordinator_url: args.coordinator_url,
         openai_api_url: args.openai_api_url,
+        admin_api_key: args.admin_api_key,
         tls_cert: args.tls_cert,
         tls_key: args.tls_key,
         client_ca: args.client_ca,

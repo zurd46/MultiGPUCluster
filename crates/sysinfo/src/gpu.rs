@@ -49,13 +49,22 @@ pub fn detect() -> Result<Vec<pb::GpuInfo>> {
             power_limit_w: dev.power_management_limit().unwrap_or(0) / 1000,
             nvlink_present: false,
             capability: Some(build_capability(&arch, cc, mem.as_ref().map(|m| m.total).unwrap_or(0))),
+            backend: pb::GpuBackend::Cuda as i32,
+            unified_memory: false,
+            gpu_core_count: 0,
+            metal_family: String::new(),
         });
     }
 
     Ok(out)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(target_os = "macos")]
+pub fn detect() -> Result<Vec<pb::GpuInfo>> {
+    crate::gpu_metal::detect()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 pub fn detect() -> Result<Vec<pb::GpuInfo>> {
     Ok(Vec::new())
 }
@@ -101,5 +110,7 @@ fn build_capability(
         supports_fp4,
         supports_int8_tc,
         benchmark: None,
+        backend: pb::GpuBackend::Cuda as i32,
+        unified_memory: false,
     }
 }

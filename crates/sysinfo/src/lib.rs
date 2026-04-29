@@ -3,6 +3,9 @@ pub mod os;
 pub mod network;
 pub mod fingerprint;
 
+#[cfg(target_os = "macos")]
+mod gpu_metal;
+
 use gpucluster_proto::node as pb;
 
 pub fn collect() -> anyhow::Result<pb::NodeInfo> {

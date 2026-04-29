@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<title>GPU Cluster — Verwaltung</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14171c;
+    --panel-2: #1b1f26;
+    --border: #232932;
+    --text: #d8dee9;
+    --muted: #7a8694;
+    --accent: #4aa3ff;
+    --ok: #6dd47e;
+    --warn: #f6c177;
+    --err: #ef6f6c;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  }
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 18px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .wrap {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 16px;
+    padding: 20px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow: hidden;
+  }
+  .card h2 {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok  { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.err { background: var(--err); }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  tr:last-child td { border-bottom: 0; }
+  .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+  pre {
+    margin: 0;
+    background: var(--panel-2);
+    padding: 10px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    overflow: auto;
+    max-height: 280px;
+  }
+  .grid-services {
+    display: grid;
+    grid-template-columns: 1fr 80px;
+    gap: 6px 12px;
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+  .grid-services .name { color: var(--text); }
+  .grid-services .val.ok  { color: var(--ok); }
+  .grid-services .val.err { color: var(--err); }
+  footer { color: var(--muted); padding: 12px 24px; font-size: 12px; border-top: 1px solid var(--border); }
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 6px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-family: var(--mono); border: 1px solid var(--border);
+  }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .pill.err { color: var(--err); border-color: var(--err); }
+  input[type=text], input[type=password] {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 6px; font: inherit; font-family: var(--mono);
+  }
+  .key-row { display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>GPU Cluster — Verwaltung</h1>
+    <div class="sub">zentrales Backend · alles auf einer URL</div>
+  </div>
+  <div class="row">
+    <div class="key-row">
+      <label class="sub">Admin-Key:</label>
+      <input id="adminKey" type="password" placeholder="ADMIN_API_KEY" size="20" />
+    </div>
+    <button id="refresh">Aktualisieren</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <section class="card">
+    <h2><span id="dot-services" class="dot"></span>Service-Status</h2>
+    <div id="services" class="grid-services">
+      <div class="empty">lade…</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="dot"></span>Coordinator — live nodes</h2>
+    <div id="coord-nodes"><div class="empty">lade…</div></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="dot"></span>Mgmt — registrierte Nodes</h2>
+    <div id="mgmt-nodes"><div class="empty">lade…</div></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="dot"></span>OpenAI-API — Modelle</h2>
+    <div id="models"><div class="empty">lade…</div></div>
+  </section>
+
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2><span class="dot"></span>Roh-Aggregation (/overview)</h2>
+    <pre id="raw">lade…</pre>
+  </section>
+</div>
+
+<footer>
+  Endpoints: <code>/health</code> · <code>/overview</code> · <code>/api/v1/...</code> (mgmt) · <code>/cluster/...</code> (coordinator) · <code>/v1/...</code> (openai) · <code>/enroll</code>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function pill(status) {
+  if (status === "ok" || status === true) return '<span class="pill ok">ok</span>';
+  if (status === "down" || status === false) return '<span class="pill err">down</span>';
+  return '<span class="pill warn">' + status + '</span>';
+}
+
+function renderServices(s) {
+  const order = ["gateway", "mgmt", "coordinator", "openai_api"];
+  $("services").innerHTML = order.map(k => {
+    const v = s[k] || { status: "unknown" };
+    const ok = v.status === "ok";
+    return `<div class="name">${k}</div><div class="val ${ok ? "ok" : "err"}">${pill(v.status)}</div>`;
+  }).join("");
+  const allOk = order.every(k => (s[k] || {}).status === "ok");
+  $("dot-services").className = "dot " + (allOk ? "ok" : "err");
+}
+
+function renderTable(target, rows, cols) {
+  if (!rows || rows.length === 0) {
+    target.innerHTML = '<div class="empty">keine Einträge</div>';
+    return;
+  }
+  const head = "<tr>" + cols.map(c => `<th>${c.label}</th>`).join("") + "</tr>";
+  const body = rows.map(r => "<tr>" + cols.map(c => `<td>${r[c.key] ?? ""}</td>`).join("") + "</tr>").join("");
+  target.innerHTML = `<table>${head}${body}</table>`;
+}
+
+async function load() {
+  const key = $("adminKey").value.trim();
+  const headers = key ? { "Authorization": "Bearer " + key } : {};
+  try {
+    const res = await fetch("/overview", { headers });
+    const data = await res.json();
+    $("raw").textContent = JSON.stringify(data, null, 2);
+    renderServices(data.services || {});
+
+    const coord = (data.coordinator && data.coordinator.nodes) || [];
+    renderTable($("coord-nodes"), coord, [
+      { key: "id", label: "id" },
+      { key: "hostname", label: "hostname" },
+      { key: "status", label: "status" },
+      { key: "last_heartbeat", label: "last heartbeat" },
+    ]);
+
+    const mgmt = (data.mgmt && data.mgmt.nodes) || [];
+    renderTable($("mgmt-nodes"), mgmt, [
+      { key: "id", label: "id" },
+      { key: "display_name", label: "name" },
+      { key: "status", label: "status" },
+      { key: "created_at", label: "created" },
+    ]);
+
+    const models = (data.openai_api && data.openai_api.data) || [];
+    renderTable($("models"), models, [
+      { key: "id", label: "id" },
+      { key: "owned_by", label: "owned_by" },
+    ]);
+  } catch (e) {
+    $("raw").textContent = "Fehler beim Laden: " + e;
+  }
+}
+
+$("refresh").addEventListener("click", load);
+$("adminKey").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+
+// initial + auto-refresh
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

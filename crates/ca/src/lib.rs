@@ -5,39 +5,60 @@ use rcgen::{
 };
 use time::{Duration as TimeDuration, OffsetDateTime};
 
-/// In-memory CA materials. Persist `cert_pem` and `key_pem` securely.
+/// Active CA materials for the cluster.
+///
+/// `original_cert_pem` is the cert that was stored in the database when the CA
+/// was first generated — that's the cert workers receive in their CA chain and
+/// pin against. `cert` is an in-memory issuer handle used for signing new leaf
+/// certs. After a restart the in-memory `cert` is rebuilt with the same DN and
+/// same key, so it produces leaves whose `Issuer` field matches the
+/// `original_cert_pem`'s `Subject`.
 pub struct Ca {
     pub cert: Certificate,
     pub key: KeyPair,
+    pub original_cert_pem: Option<String>,
+    pub common_name: String,
 }
 
 impl Ca {
-    pub fn cert_pem(&self) -> String { self.cert.pem() }
-    pub fn key_pem(&self)  -> String { self.key.serialize_pem() }
+    pub fn cert_pem(&self) -> String {
+        self.original_cert_pem
+            .clone()
+            .unwrap_or_else(|| self.cert.pem())
+    }
+    pub fn key_pem(&self) -> String {
+        self.key.serialize_pem()
+    }
 }
 
-/// Materials for an issued leaf certificate (e.g. a worker node's mTLS cert).
 pub struct IssuedCert {
     pub cert_pem: String,
     pub key_pem: String,
 }
 
 pub fn generate_root_ca(common_name: &str) -> Result<Ca> {
-    let mut params = CertificateParams::default();
-    let mut dn = DistinguishedName::new();
-    dn.push(DnType::CommonName, common_name);
-    dn.push(DnType::OrganizationName, "MultiGPUCluster");
-    params.distinguished_name = dn;
-    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.key_usages = vec![
-        KeyUsagePurpose::KeyCertSign,
-        KeyUsagePurpose::CrlSign,
-        KeyUsagePurpose::DigitalSignature,
-    ];
-
     let key = KeyPair::generate()?;
-    let cert = params.self_signed(&key)?;
-    Ok(Ca { cert, key })
+    let cert = build_root_cert(common_name, &key)?;
+    Ok(Ca {
+        cert,
+        key,
+        original_cert_pem: None,
+        common_name: common_name.to_string(),
+    })
+}
+
+/// Re-hydrate a CA from previously persisted PEM material.
+/// Fails if the key is unreadable. The original cert PEM is kept verbatim so
+/// distributed CA chains stay stable.
+pub fn load_ca(common_name: &str, original_cert_pem: &str, key_pem: &str) -> Result<Ca> {
+    let key = KeyPair::from_pem(key_pem)?;
+    let cert = build_root_cert(common_name, &key)?;
+    Ok(Ca {
+        cert,
+        key,
+        original_cert_pem: Some(original_cert_pem.to_string()),
+        common_name: common_name.to_string(),
+    })
 }
 
 pub fn issue_node_cert(ca: &Ca, node_id: &str, valid_days: u32) -> Result<IssuedCert> {
@@ -61,4 +82,19 @@ pub fn issue_node_cert(ca: &Ca, node_id: &str, valid_days: u32) -> Result<Issued
         cert_pem: leaf_cert.pem(),
         key_pem: leaf_key.serialize_pem(),
     })
+}
+
+fn build_root_cert(common_name: &str, key: &KeyPair) -> Result<Certificate> {
+    let mut params = CertificateParams::default();
+    let mut dn = DistinguishedName::new();
+    dn.push(DnType::CommonName, common_name);
+    dn.push(DnType::OrganizationName, "MultiGPUCluster");
+    params.distinguished_name = dn;
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::CrlSign,
+        KeyUsagePurpose::DigitalSignature,
+    ];
+    Ok(params.self_signed(key)?)
 }
