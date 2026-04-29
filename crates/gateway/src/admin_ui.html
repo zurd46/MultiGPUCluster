@@ -1090,8 +1090,26 @@ async function loadSettings() {
     $("set-default-model").value = v("default_model", "auto");
     $("set-rate-limit").value    = v("rate_limit_rpm", "60");
     $("set-max-tokens").value    = v("max_tokens_default", "4096");
-    $("settings-meta").textContent = "loaded";
-    renderEndpointSnippet(v("public_base_url"));
+
+    // Auto-persist on first load: if the admin never saved a public_base_url,
+    // capture whatever the gateway derived from the live request and write it
+    // back. Means the URL "just works" without anyone touching the field.
+    const savedUrl = v("public_base_url").trim();
+    if (!savedUrl && lastEffectiveUrl) {
+      try {
+        await mgmtCall("PUT", "/api/v1/settings", { public_base_url: lastEffectiveUrl });
+        $("set-public-url").value = lastEffectiveUrl;
+        $("settings-meta").textContent = `auto-detected: ${lastEffectiveUrl}`;
+      } catch (_) {
+        // Silent: if auto-save fails (e.g. mgmt down), the snippet still
+        // works because renderEndpointSnippet uses the derived URL anyway.
+        $("settings-meta").textContent = "loaded (using auto-detected URL)";
+      }
+    } else {
+      $("settings-meta").textContent = "loaded";
+    }
+    // Snippet always uses the saved value if present, otherwise the derived one.
+    renderEndpointSnippet(savedUrl || lastEffectiveUrl);
   } catch (e) {
     $("settings-meta").textContent = "error: " + e.message;
   }
@@ -1207,6 +1225,7 @@ async function handleModelAction(action, id, status) {
 
 // ---------- main load ----------
 let lastData = null;
+let lastEffectiveUrl = "";
 
 async function load() {
   const key = $("adminKey").value.trim();
@@ -1228,6 +1247,14 @@ async function load() {
     renderDonut(donutSrc);
 
     renderTables(ctx);
+
+    // Endpoint URL: prefer admin-saved value, fall back to whatever Caddy/host
+    // headers say we are. This makes the snippet correct on first load even
+    // before anyone fills in `public_base_url`.
+    const ep = data.endpoint || {};
+    lastEffectiveUrl = ep.effective_base_url || window.location.origin;
+    $("set-public-url").placeholder = ep.derived_public_base_url || window.location.origin;
+    renderEndpointSnippet(lastEffectiveUrl);
 
     const now = new Date();
     $("last-updated").textContent = "updated " + now.toLocaleTimeString();
