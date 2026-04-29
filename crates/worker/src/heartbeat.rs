@@ -153,19 +153,65 @@ pub async fn publish_draining(
     sup: &SharedSupervisor,
     control_endpoint: &str,
 ) {
-    let client = match reqwest::Client::builder()
-        .timeout(SHUTDOWN_HEARTBEAT_TIMEOUT)
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(error = %e, "couldn't build draining-heartbeat client");
-            return;
-        }
-    };
+    // Re-use the same identity-aware builder as the main loop. We accept the
+    // ~10 s default timeout being overridden to a tight 3 s here at the
+    // request layer below.
+    let client = build_worker_http_client();
     let report_url = format!("{}/nodes/report", coordinator_url.trim_end_matches('/'));
     let mut draining = info.clone();
     draining.status = pb::NodeStatus::Draining as i32;
     tracing::info!(node = %draining.node_id, "publishing draining heartbeat");
     publish(&client, &report_url, &draining, sup, control_endpoint).await;
+}
+
+/// Loads `identity.json` from the worker's data dir and builds an mTLS-capable
+/// HTTP client. Falls back to a plain client when the identity is missing
+/// (dev smoke tests outside of enrollment) or unreadable.
+///
+/// `IDENTITY_FILE` env-var lets ops override the path for unusual deployments
+/// (e.g. a sealed-secret-mounted file at a non-default location).
+fn build_worker_http_client() -> reqwest::Client {
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    struct Identity {
+        #[serde(default)] client_cert_pem: String,
+        #[serde(default)] client_key_pem: String,
+    }
+
+    let candidates = [
+        std::env::var("IDENTITY_FILE").ok(),
+        std::env::var("NODE_DATA_DIR").ok().map(|d| format!("{}/identity.json", d.trim_end_matches('/'))),
+        Some("/var/lib/gpucluster/identity.json".into()),
+        Some("/Library/Application Support/gpucluster/identity.json".into()),
+    ];
+
+    let id_pem: Option<(String, String)> = candidates
+        .into_iter()
+        .flatten()
+        .find_map(|p| std::fs::read_to_string(&p).ok())
+        .and_then(|s| serde_json::from_str::<Identity>(&s).ok())
+        .filter(|id| !id.client_cert_pem.is_empty() && !id.client_key_pem.is_empty())
+        .map(|id| (id.client_cert_pem, id.client_key_pem));
+
+    // Dev path: gateway uses Caddy's internal CA which the system root store
+    // doesn't trust. Production uses Let's Encrypt + cluster CA so this flag
+    // can stay false.
+    let accept_invalid = std::env::var("WORKER_ACCEPT_INVALID_TLS")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+
+    match id_pem {
+        Some((cert, key)) => {
+            tracing::info!("worker http client: mTLS identity loaded");
+            gpucluster_common::clients::worker_http_client(&cert, &key, accept_invalid)
+        }
+        None => {
+            tracing::info!("worker http client: no identity.json found — running plain HTTP");
+            let mut b = reqwest::Client::builder().timeout(Duration::from_secs(10));
+            if accept_invalid {
+                b = b.danger_accept_invalid_certs(true);
+            }
+            b.build().unwrap_or_else(|_| reqwest::Client::new())
+        }
+    }
 }
