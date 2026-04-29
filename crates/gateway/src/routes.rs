@@ -16,7 +16,9 @@ use crate::{
     state::GatewayState,
 };
 
-const ADMIN_HTML: &str = include_str!("admin_ui.html");
+const ADMIN_HTML: &str = include_str!("ui/admin.html");
+const ADMIN_CSS:  &str = include_str!("ui/admin.css");
+const ADMIN_JS:   &str = include_str!("ui/admin.js");
 
 pub fn build(state: Arc<GatewayState>) -> Router {
     // Customer-facing OpenAI-compatible API. Bearer token (mgc_*) required.
@@ -31,6 +33,8 @@ pub fn build(state: Arc<GatewayState>) -> Router {
 
     Router::new()
         .route("/", get(index))
+        .route("/admin.css", get(admin_css))
+        .route("/admin.js",  get(admin_js))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/overview", get(overview))
@@ -44,6 +48,22 @@ pub fn build(state: Arc<GatewayState>) -> Router {
 
 async fn index() -> Html<&'static str> {
     Html(ADMIN_HTML)
+}
+
+async fn admin_css() -> impl IntoResponse {
+    static_asset(ADMIN_CSS, "text/css; charset=utf-8")
+}
+
+async fn admin_js() -> impl IntoResponse {
+    static_asset(ADMIN_JS, "application/javascript; charset=utf-8")
+}
+
+fn static_asset(body: &'static str, mime: &'static str) -> Response {
+    let mut resp = (StatusCode::OK, body).into_response();
+    let h = resp.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    resp
 }
 
 async fn health() -> Json<Value> {

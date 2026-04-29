@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Cluster Management — MultiGPUCluster</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="/admin.css" />
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">G</div>
+    <div>
+      <div class="brand-name">Cluster</div>
+      <div class="brand-sub">MultiGPUCluster</div>
+    </div>
+  </div>
+
+  <nav class="nav" id="nav">
+    <a href="#overview"  data-route="overview"><span class="ico">▦</span><span class="lbl">Overview</span></a>
+    <a href="#nodes"     data-route="nodes"><span class="ico">●</span><span class="lbl">Nodes</span><span class="nav-badge" id="nav-count-nodes">—</span></a>
+    <a href="#models"    data-route="models"><span class="ico">▤</span><span class="lbl">Models</span><span class="nav-badge" id="nav-count-models">—</span></a>
+    <a href="#keys"      data-route="keys"><span class="ico">⎈</span><span class="lbl">API keys</span><span class="nav-badge" id="nav-count-keys">—</span></a>
+    <a href="#inference" data-route="inference"><span class="ico">≣</span><span class="lbl">Inference log</span></a>
+    <a href="#settings"  data-route="settings"><span class="ico">⚙</span><span class="lbl">Settings</span></a>
+  </nav>
+
+  <div class="sidebar-foot">
+    <form id="auth-form" action="#" method="post" autocomplete="on" onsubmit="return false;">
+      <input type="text" name="username" value="cluster-admin" autocomplete="username"
+             style="position:absolute; opacity:0; pointer-events:none; height:0; width:0;" tabindex="-1" />
+      <label for="adminKey">Admin key</label>
+      <div class="key-row">
+        <input id="adminKey" name="adminKey" type="password" placeholder="ADMIN_API_KEY"
+               autocomplete="current-password" />
+        <button type="submit" class="btn primary" title="Save in browser password manager and reload">Save</button>
+      </div>
+      <div class="auth-hint" id="auth-hint">no key saved — admin tabs will stay empty</div>
+    </form>
+    <div class="status-line">
+      <span class="live-indicator"><span class="live-dot"></span><span id="last-updated">live</span></span>
+    </div>
+  </div>
+</aside>
+
+<main>
+  <header class="topbar">
+    <div class="topbar-title">
+      <h1 id="section-title">Overview</h1>
+      <span id="section-meta" class="section-meta"></span>
+    </div>
+    <div class="topbar-actions">
+      <button id="refresh" class="btn primary" title="Reload now (R)">↻ Refresh</button>
+    </div>
+  </header>
+
+  <!-- ===================== Overview ===================== -->
+  <section id="route-overview" class="route" data-route="overview">
+
+    <div id="quickstart" class="quickstart" hidden>
+      <div class="quickstart-head">
+        <span class="quickstart-tag">Quick start</span>
+        <span class="quickstart-sub">Get from zero to a working cluster in three steps.</span>
+      </div>
+      <ol class="quickstart-steps">
+        <li id="qs-key"><span class="qs-num">1</span> <a href="#keys">Mint an API key</a> for LM Studio.</li>
+        <li id="qs-model"><span class="qs-num">2</span> <a href="#models">Register a model</a> (HuggingFace repo + GGUF file).</li>
+        <li id="qs-node"><span class="qs-num">3</span> Enroll a worker — see <code>gpucluster nodes token</code>.</li>
+      </ol>
+    </div>
+
+    <div class="kpi-grid">
+      <div id="kpi-services" class="kpi ok">
+        <div class="label">Services online</div>
+        <div class="value"><span id="kpi-services-val">—</span><span class="total" id="kpi-services-total"></span></div>
+        <div class="delta"><span id="kpi-services-detail">checking…</span></div>
+      </div>
+      <div id="kpi-live-nodes" class="kpi">
+        <div class="label">Live nodes</div>
+        <div class="value" id="kpi-live-nodes-val">—</div>
+        <div class="delta" id="kpi-live-nodes-detail">via coordinator heartbeat</div>
+      </div>
+      <div id="kpi-registered" class="kpi">
+        <div class="label">Registered nodes</div>
+        <div class="value" id="kpi-registered-val">—</div>
+        <div class="delta" id="kpi-registered-detail">requires admin key</div>
+      </div>
+      <div id="kpi-models" class="kpi">
+        <div class="label">Available models</div>
+        <div class="value" id="kpi-models-val">—</div>
+        <div class="delta" id="kpi-models-detail">OpenAI-compatible</div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Service status</h3>
+          <span class="meta">probed via <code>/health</code></span>
+        </div>
+        <div class="panel-body">
+          <div id="services" class="service-list"><div class="empty">loading…</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Node status</h3>
+          <span class="meta">live registry</span>
+        </div>
+        <div class="panel-body">
+          <div class="donut-wrap">
+            <svg class="donut" viewBox="0 0 42 42" id="donut">
+              <circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--bg-3)" stroke-width="3.5"/>
+              <g id="donut-segments"></g>
+              <text x="21" y="20" text-anchor="middle" font-size="8" font-weight="700" id="donut-total">0</text>
+              <text x="21" y="26" text-anchor="middle" font-size="3" fill="var(--muted)">nodes</text>
+            </svg>
+            <div id="legend" class="legend">
+              <div class="row"><span class="swatch" style="background: var(--muted)"></span><span>no nodes registered yet</span><span class="count">0</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <details class="raw">
+      <summary>Raw <code>/overview</code> response</summary>
+      <pre id="raw">loading…</pre>
+    </details>
+  </section>
+
+  <!-- ===================== Nodes ===================== -->
+  <section id="route-nodes" class="route" data-route="nodes" hidden>
+    <div class="table-wrap">
+      <div class="table-head">
+        <h3>Live nodes <span class="pill info" id="coord-count">0</span></h3>
+        <span class="meta">heartbeats from coordinator</span>
+        <input class="filter" id="filter-coord" type="text" placeholder="Filter by id, hostname, status…" />
+      </div>
+      <div class="table-scroll">
+        <table id="tbl-coord">
+          <thead><tr>
+            <th>Node ID</th><th>Hostname</th><th>Status</th><th>Last heartbeat</th><th>Age</th>
+          </tr></thead>
+          <tbody><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-head">
+        <h3>Registered nodes <span class="pill info" id="mgmt-count">0</span></h3>
+        <span class="meta">approve · drain · revoke</span>
+        <input class="filter" id="filter-mgmt" type="text" placeholder="Filter by id, name, status…" />
+      </div>
+      <div class="table-scroll">
+        <table id="tbl-mgmt">
+          <thead><tr>
+            <th>Node ID</th><th>Display name</th><th>Status</th><th>First seen</th><th>Actions</th>
+          </tr></thead>
+          <tbody><tr><td colspan="5" class="empty">enter admin key to view…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Models ===================== -->
+  <section id="route-models" class="route" data-route="models" hidden>
+    <div class="table-wrap">
+      <div class="table-head">
+        <h3>Models <span class="pill info" id="models-reg-count">0</span></h3>
+        <span class="meta">registry powers <code>/v1/models</code></span>
+        <input class="filter" id="filter-models-reg" type="text" placeholder="Filter by id, name, status…" />
+      </div>
+
+      <details class="form-disclosure">
+        <summary>+ Add model</summary>
+        <form class="grid-form" id="model-form" onsubmit="return false;">
+          <div class="grid-form-row">
+            <div>
+              <label for="model-id">Model ID *</label>
+              <input id="model-id" type="text" placeholder="llama-3.1-8b-instruct" required />
+            </div>
+            <div>
+              <label for="model-name">Display name</label>
+              <input id="model-name" type="text" placeholder="Llama 3.1 8B Instruct" />
+            </div>
+            <div>
+              <label for="model-status">Status</label>
+              <select id="model-status">
+                <option value="available">available</option>
+                <option value="loading">loading</option>
+                <option value="disabled">disabled</option>
+                <option value="error">error</option>
+              </select>
+            </div>
+            <div>
+              <label for="model-default">Default?</label>
+              <select id="model-default">
+                <option value="false">no</option>
+                <option value="true">yes</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-divider">
+            HuggingFace source <span class="muted">— optional, fill both to enable the “Load” action</span>
+          </div>
+          <div class="grid-form-row">
+            <div class="span-2">
+              <label for="model-hf-repo">HF repo</label>
+              <input id="model-hf-repo" type="text" placeholder="bartowski/Llama-3.2-1B-Instruct-GGUF" />
+            </div>
+            <div class="span-2">
+              <label for="model-hf-file">HF file</label>
+              <input id="model-hf-file" type="text" placeholder="Llama-3.2-1B-Instruct-Q4_K_M.gguf" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button id="model-create" type="submit" class="btn primary">+ Add model</button>
+          </div>
+        </form>
+      </details>
+
+      <div class="table-scroll">
+        <table id="tbl-models-reg">
+          <thead><tr>
+            <th>ID</th><th>Display name</th><th>HF source</th><th>Status</th><th>Default</th><th>Loaded on</th><th>Created</th><th></th>
+          </tr></thead>
+          <tbody><tr><td colspan="8" class="empty">enter admin key to view…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Keys ===================== -->
+  <section id="route-keys" class="route" data-route="keys" hidden>
+    <div class="table-wrap">
+      <div class="table-head">
+        <h3>API keys <span class="pill info" id="keys-count">0</span></h3>
+        <span class="meta">bearer tokens for <code>/v1/*</code></span>
+        <input class="filter" id="filter-keys" type="text" placeholder="Filter by name, prefix, scope…" />
+      </div>
+
+      <details class="form-disclosure" open>
+        <summary>+ Create key</summary>
+        <form class="grid-form" id="key-form" onsubmit="return false;">
+          <div class="grid-form-row">
+            <div class="span-2">
+              <label for="key-name">Name *</label>
+              <input id="key-name" type="text" placeholder="lm-studio-laptop" required />
+            </div>
+            <div>
+              <label for="key-scope">Scope</label>
+              <select id="key-scope">
+                <option value="inference">inference</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
+            <div>
+              <label for="key-ttl">TTL (days)</label>
+              <input id="key-ttl" type="number" min="1" max="365" placeholder="∞" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button id="key-create" type="submit" class="btn primary">+ Create key</button>
+          </div>
+        </form>
+      </details>
+
+      <div id="new-key" class="banner banner-ok" hidden>
+        <div class="banner-title">✓ Key created — copy it now, it will never be shown again</div>
+        <div class="token-row">
+          <code id="new-key-token"></code>
+          <button id="new-key-copy" class="btn">Copy</button>
+          <button id="new-key-dismiss" class="btn">Dismiss</button>
+        </div>
+        <div class="banner-hint">Use as <code>Authorization: Bearer &lt;token&gt;</code> on <code>/v1/*</code>, or paste into LM Studio's API-key field.</div>
+      </div>
+
+      <div class="table-scroll">
+        <table id="tbl-keys">
+          <thead><tr>
+            <th>Name</th><th>Prefix</th><th>Scope</th><th>Created</th><th>Last used</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody><tr><td colspan="7" class="empty">enter admin key to view…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Inference log ===================== -->
+  <section id="route-inference" class="route" data-route="inference" hidden>
+    <div class="table-wrap">
+      <div class="table-head">
+        <h3>Recent inference requests <span class="pill info" id="inflog-count">0</span></h3>
+        <div class="filters-row">
+          <select id="inflog-status" class="filter">
+            <option value="">all</option>
+            <option value="ok">success only</option>
+            <option value="errors">errors only</option>
+          </select>
+          <input class="filter" id="inflog-node"  type="text" placeholder="Filter by node id…" />
+          <input class="filter" id="inflog-model" type="text" placeholder="Filter by model…" />
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table id="tbl-inflog">
+          <thead><tr>
+            <th>Time</th><th>Status</th><th>Model</th><th>Node</th><th>Tokens (in/out/total)</th><th>Latency</th><th>API key</th><th>Error</th>
+          </tr></thead>
+          <tbody><tr><td colspan="8" class="empty">enter admin key to view…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Settings ===================== -->
+  <section id="route-settings" class="route" data-route="settings" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Cluster settings</h3>
+        <span class="meta">backend → <code>/api/v1/settings</code></span>
+      </div>
+      <form class="grid-form" id="settings-form" onsubmit="return false;">
+        <div class="grid-form-row">
+          <div class="span-2">
+            <label for="set-public-url">Public base URL</label>
+            <input id="set-public-url" type="text" placeholder="https://cluster.example.com" />
+          </div>
+          <div class="span-2">
+            <label for="set-default-model">Default model</label>
+            <input id="set-default-model" type="text" placeholder="auto" />
+          </div>
+        </div>
+        <div class="grid-form-row">
+          <div>
+            <label for="set-rate-limit">Rate limit (rpm)</label>
+            <input id="set-rate-limit" type="number" min="1" placeholder="60" />
+          </div>
+          <div>
+            <label for="set-max-tokens">Max tokens default</label>
+            <input id="set-max-tokens" type="number" min="1" placeholder="4096" />
+          </div>
+          <div class="span-2">
+            <label for="set-hf-token">HuggingFace API token <span class="muted">(only for gated/private repos)</span></label>
+            <input id="set-hf-token" type="password" autocomplete="off" placeholder="hf_••••••••••••" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button id="settings-save" type="submit" class="btn primary">Save settings</button>
+          <span id="settings-meta" class="muted small"></span>
+        </div>
+      </form>
+    </div>
+
+    <div id="endpoint-snippet" class="panel" hidden>
+      <div class="panel-head">
+        <h3>Client config snippet</h3>
+        <span class="meta">LM Studio · OpenAI SDK</span>
+      </div>
+      <pre class="snippet"><code id="endpoint-snippet-content"></code></pre>
+    </div>
+  </section>
+
+</main>
+
+<!-- Modal scaffold (used by JS) -->
+<dialog id="modal" class="modal">
+  <div class="modal-card">
+    <header class="modal-head">
+      <h3 id="modal-title"></h3>
+      <button type="button" id="modal-close" aria-label="Close" class="icon-btn">×</button>
+    </header>
+    <div id="modal-body" class="modal-body"></div>
+    <footer id="modal-foot" class="modal-foot"></footer>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" role="alert"></div>
+
+<script src="/admin.js"></script>
+</body>
+</html>
