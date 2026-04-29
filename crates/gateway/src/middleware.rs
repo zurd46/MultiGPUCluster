@@ -71,7 +71,7 @@ pub struct AuthedKey {
 ///   * verdict.ok == false      → 401
 pub async fn require_v1_api_key(
     State(state): State<Arc<GatewayState>>,
-    mut req: Request,
+    req: Request,
     next: Next,
 ) -> Response {
     let token = match extract_bearer(req.headers()) {

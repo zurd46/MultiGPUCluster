@@ -330,6 +330,66 @@
     max-width: 360px;
   }
   .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.ok  { border-color: var(--ok);  color: var(--ok); }
+
+  /* ---------- API keys panel ---------- */
+  .keys-form {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr auto;
+    gap: 10px; align-items: end;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,0.02) 0%, transparent 100%);
+  }
+  @media (max-width: 720px) { .keys-form { grid-template-columns: 1fr; } }
+  .keys-form label { display: block; color: var(--muted); font-size: 11px;
+                     text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .keys-form input, .keys-form select {
+    background: var(--bg-2); color: var(--text);
+    border: 1px solid var(--border-strong);
+    padding: 7px 10px; border-radius: 6px;
+    font: inherit; font-family: var(--mono); font-size: 12px;
+    width: 100%;
+  }
+  .keys-form input:focus, .keys-form select:focus { outline: none; border-color: var(--accent); }
+
+  .new-key-banner {
+    margin: 14px 18px 0;
+    padding: 12px 14px;
+    background: rgba(63, 185, 80, 0.08);
+    border: 1px solid var(--ok);
+    border-radius: 8px;
+    display: none;
+  }
+  .new-key-banner.show { display: block; }
+  .new-key-banner .title {
+    color: var(--ok); font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;
+  }
+  .new-key-banner .token-row {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .new-key-banner code {
+    flex: 1;
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    word-break: break-all;
+    color: var(--text);
+  }
+  .new-key-banner .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+
+  .key-action {
+    background: transparent; color: var(--err);
+    border: 1px solid var(--border-strong); border-radius: 6px;
+    padding: 4px 10px; font: inherit; font-size: 11px; font-family: var(--mono);
+    cursor: pointer; transition: all 0.15s;
+  }
+  .key-action:hover { border-color: var(--err); background: rgba(248, 81, 73, 0.08); }
+  .key-action[disabled] { color: var(--muted); cursor: not-allowed; }
+  .key-action[disabled]:hover { border-color: var(--border-strong); background: transparent; }
 </style>
 </head>
 <body>
