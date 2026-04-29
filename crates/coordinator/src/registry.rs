@@ -67,4 +67,38 @@ impl Registry {
     }
 
     pub fn count(&self) -> usize { self.inner.len() }
+
+    /// Returns `Some(node_id)` if there is *another* entry with the same
+    /// `hw_fingerprint` whose last heartbeat is fresher than `stale_after`.
+    /// Used to reject a second worker process trying to register from the
+    /// same physical machine under a new identity (typical cause: someone
+    /// started the worker with a different `--data-dir`, getting a fresh
+    /// `node.id` file and reporting as a "new" node).
+    ///
+    /// Empty `hw_fingerprint` is never considered a conflict — Phase 1 dev
+    /// builds without sysinfo populated would otherwise lock each other out.
+    pub fn find_active_with_hw_fingerprint(
+        &self,
+        hw_fingerprint: &str,
+        exclude_node_id: &str,
+        stale_after: chrono::Duration,
+    ) -> Option<String> {
+        if hw_fingerprint.is_empty() {
+            return None;
+        }
+        let now = Utc::now();
+        for entry in self.inner.iter() {
+            let e = entry.value();
+            if e.info.node_id == exclude_node_id {
+                continue;
+            }
+            if e.info.hw_fingerprint != hw_fingerprint {
+                continue;
+            }
+            if now.signed_duration_since(e.last_heartbeat) <= stale_after {
+                return Some(e.info.node_id.clone());
+            }
+        }
+        None
+    }
 }

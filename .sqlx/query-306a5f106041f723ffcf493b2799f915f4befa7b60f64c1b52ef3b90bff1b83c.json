@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor, action, resource, details)\n                 VALUES ('reconciler', 'MODEL_RECONCILED', $1, $2::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "306a5f106041f723ffcf493b2799f915f4befa7b60f64c1b52ef3b90bff1b83c"
+}

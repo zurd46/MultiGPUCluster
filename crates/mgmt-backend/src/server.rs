@@ -12,6 +12,7 @@ use crate::{
     config::MgmtConfig,
     db,
     handlers::{api_keys, audit, enroll, enroll_token, inference, models, nodes, settings},
+    reconciler,
     state::AppState,
 };
 
@@ -29,6 +30,11 @@ pub async fn run(cfg: MgmtConfig) -> Result<()> {
         admin_api_key: cfg.admin_api_key.clone(),
         coordinator_endpoint: cfg.coordinator_endpoint.clone(),
     };
+
+    // Background loop: reconciles the model registry against live worker
+    // state so the admin UI shows what's actually loaded, not what we
+    // optimistically wrote at Load-click time. Runs every 5 s.
+    reconciler::spawn(state.pool.clone(), state.coordinator_endpoint.clone());
 
     // Public routes (worker-side and health)
     let public = Router::new()

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE models\n                      SET loaded_on_node = $2,\n                          status         = $3,\n                          updated_at     = now()\n                    WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cabd3aa7eb35ad7f55ff8fe5049136d24c87385b67dfe8ebb5d289626b4763c4"
+}

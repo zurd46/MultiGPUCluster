@@ -108,7 +108,8 @@ async fn publish(
     }
     match client.post(url).json(&body).send().await {
         Ok(r) => {
-            if r.status().is_success() {
+            let status = r.status();
+            if status.is_success() {
                 tracing::debug!(
                     node = %info.node_id,
                     gpus = info.gpus.len(),
@@ -116,7 +117,18 @@ async fn publish(
                     "inventory published",
                 );
             } else {
-                tracing::warn!(node = %info.node_id, status = %r.status(), "inventory upload rejected");
+                // Surface the response body on rejection. The coordinator's
+                // duplicate-hw_fingerprint guard returns a 409 with a JSON
+                // body that names the conflicting node — without logging it
+                // the operator only sees an opaque "rejected" line and has
+                // no clue what to fix.
+                let body_text = r.text().await.unwrap_or_default();
+                tracing::warn!(
+                    node = %info.node_id,
+                    %status,
+                    body = %body_text,
+                    "inventory upload rejected",
+                );
             }
         }
         Err(e) => tracing::warn!(error = %e, %url, "inventory upload failed"),

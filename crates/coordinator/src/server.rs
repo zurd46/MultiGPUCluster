@@ -195,6 +195,41 @@ async fn report_node(
         return Err((StatusCode::BAD_REQUEST,
             Json(json!({ "error": "missing_node_id" }))));
     }
+
+    // Duplicate-worker guard: if another worker with the same hardware
+    // fingerprint is still actively heartbeating under a different node_id,
+    // reject this report. The second process is almost certainly an
+    // accidental dual-start (different --data-dir → different node.id file,
+    // same physical machine). We use 60 s as the freshness window — same
+    // value the watchdog uses to mark nodes offline — so once the original
+    // worker truly goes away, the new one can take over without operator
+    // intervention.
+    if let Some(existing) = reg.find_active_with_hw_fingerprint(
+        &info.hw_fingerprint,
+        &info.node_id,
+        chrono::Duration::seconds(60),
+    ) {
+        tracing::warn!(
+            new_node_id = %info.node_id,
+            existing_node_id = %existing,
+            hw_fingerprint = %info.hw_fingerprint,
+            "rejecting duplicate worker registration",
+        );
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "duplicate_hw_fingerprint",
+                "message": format!(
+                    "another worker on this hardware is already active as node {existing}. \
+                     Stop the other worker (or wait ~60 s for its heartbeat to expire) \
+                     before re-registering with a new node_id."
+                ),
+                "active_node_id": existing,
+                "hw_fingerprint": info.hw_fingerprint,
+            })),
+        ));
+    }
+
     let public_ip = Some(addr.ip().to_string());
     let id = info.node_id.clone();
     let device = info.os.as_ref().map(|o| o.device_name.clone()).unwrap_or_default();
