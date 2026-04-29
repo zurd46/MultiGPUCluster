@@ -48,7 +48,7 @@ pub fn detect() -> Result<Vec<pb::GpuInfo>> {
             vbios_version: dev.vbios_version().unwrap_or_default(),
             power_limit_w: dev.power_management_limit().unwrap_or(0) / 1000,
             nvlink_present: false,
-            capability: Some(build_capability(&arch, cc, mem.as_ref().map(|m| m.total).unwrap_or(0))),
+            capability: Some(build_capability(&arch, cc.map(|c| (c.major, c.minor)), mem.as_ref().map(|m| m.total).unwrap_or(0))),
             backend: pb::GpuBackend::Cuda as i32,
             unified_memory: false,
             gpu_core_count: 0,
@@ -86,11 +86,11 @@ fn classify_arch(major: i32, minor: i32) -> String {
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn build_capability(
     arch: &str,
-    cc: Option<nvml_wrapper::struct_wrappers::device::CudaComputeCapability>,
+    cc: Option<(i32, i32)>,
     vram: u64,
 ) -> pb::GpuCapabilityProfile {
-    let major = cc.map(|c| c.major as u32).unwrap_or(0);
-    let minor = cc.map(|c| c.minor as u32).unwrap_or(0);
+    let major = cc.map(|c| c.0 as u32).unwrap_or(0);
+    let minor = cc.map(|c| c.1 as u32).unwrap_or(0);
 
     let supports_bf16 = major >= 8;
     let supports_fp16 = major >= 6;

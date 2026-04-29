@@ -84,7 +84,8 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full architecture document, including
 ### Cluster management
 - Auto-enrollment with one-time tokens, short-lived mTLS certs (7-day TTL), auto-renewal
 - Per-node identity: UUIDv7 ID + hardware fingerprint, persistent across reboots
-- Full inventory: OS, GPU model + architecture, driver version, CUDA version, VBIOS, public IP, ASN, geo
+- **Full inventory visible from every client** — device name (`scutil --get ComputerName` on macOS, `hostnamectl --pretty` on Linux, hostname elsewhere), OS family + version + kernel + arch, CPU model + cores, RAM, every GPU with backend / architecture / VRAM / cores / precision support. The same block is printed by `gpucluster-worker` at startup, by `gpucluster-agent status`, and during enrollment so the operator confirms what's about to be uploaded.
+- **All inventory streams to the gateway** — workers POST a full `NodeInfo` snapshot to `/cluster/nodes/report` every 30 s (gateway proxies to coordinator). Same JSON shape on enrollment and heartbeat, so registration and updates share one code path. `GET /cluster/nodes` returns the full inventory back, decorated with `last_heartbeat` and the TLS-socket-captured `current_public_ip`.
 - WAN-IP history per node (authoritative, captured at TLS socket level)
 - Driver-mismatch quarantine (NCCL incompatibility detection)
 - Status lifecycle: `pending_approval` → `online` → `degraded`/`draining`/`offline`/`quarantined`/`revoked`

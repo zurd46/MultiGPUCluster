@@ -608,14 +608,46 @@ message GpuInfo {
 
 ### 9.3 Daten-Quellen
 
-| Datenpunkt | Windows | Linux |
-|---|---|---|
-| OS-Info | `GetVersionEx` / WMI | `/etc/os-release` + `uname` |
-| GPU + Treiber | **NVML** (`nvmlDeviceGet*`) | NVML (gleich) |
-| CUDA Runtime | `cudaDriverGetVersion` | gleich |
-| Mainboard/MAC | WMI | `dmidecode` / `/sys/class/net` |
+| Datenpunkt | Windows | Linux | macOS (Apple Silicon) |
+|---|---|---|---|
+| OS-Info | `GetVersionEx` / WMI | `/etc/os-release` + `uname` | `sw_vers` / `uname` |
+| Device-Name (friendly) | hostname | `hostnamectl --pretty` | `scutil --get ComputerName` |
+| Hostname | `GetComputerName` | `gethostname` | `gethostname` |
+| GPU + Treiber | **NVML** (`nvmlDeviceGet*`) | NVML (gleich) | `system_profiler SPDisplaysDataType -json` |
+| Chip-Familie / Cores | n/a | n/a | `sysctl machdep.cpu.brand_string`, `sppci_cores` |
+| Compute Runtime | `cudaDriverGetVersion` | gleich | macOS-Build (`kern.osversion`) |
+| Mainboard/MAC | WMI | `dmidecode` / `/sys/class/net` | `mac_address` crate |
 
-→ Crate `nvml-wrapper`, gebündelt in `crates/sysinfo/`.
+→ Crate `nvml-wrapper` für CUDA-Hosts, eigenes `gpu_metal`-Modul für Apple Silicon. Beide produzieren am Ende denselben `pb::GpuInfo`, gebündelt in `crates/sysinfo/`.
+
+### 9.3.1 Inventory-Upload zum Gateway
+
+Nach dem Enrollment lädt der Worker alle 30 Sekunden seinen vollständigen `NodeInfo`-Snapshot zum Gateway hoch — ein einziger Pfad für Erst-Registrierung **und** laufende Updates:
+
+```
+Worker (gpucluster-worker, jeder Tick)
+  │
+  │  POST {coordinator_url}/nodes/report
+  │  Content-Type: application/json
+  │  Body: gpucluster_sysinfo::inventory::to_json(&NodeInfo)
+  │
+  ▼
+Gateway (Caddy → :8443) — /cluster/* → coordinator
+  │  routes.rs::cluster_proxy strippt /cluster
+  ▼
+Coordinator HTTP (:7001) /nodes/report
+  │  parst JSON → pb::NodeInfo
+  │  Registry::upsert() merkt last_heartbeat + current_public_ip (TLS-Socket)
+  │
+GET /cluster/nodes  → liefert volles Inventory pro Node (gleiche JSON-Form)
+```
+
+Eigenschaften:
+
+- **Single Source of Truth.** `inventory::to_json` produziert *eine* Wire-Form; Enrollment-Payload und Heartbeat verwenden sie unverändert. Der Mgmt-Backend-Enroll-Handler liest dasselbe `node`-Objekt.
+- **Upsert-by-node_id.** `/nodes/report` ist gleichzeitig Register + Heartbeat. Keine Sonderfall-Logik bei Re-Boot oder IP-Wechsel.
+- **Volatile Felder werden refreshed.** Vor jedem Tick ruft der Worker erneut `gpucluster_sysinfo::collect()` auf, damit `vram_free_bytes`, `ram_free_bytes` und LAN-IP aktuell sind.
+- **Public-IP autoritativ.** Der Coordinator nimmt die Remote-Adresse vom Socket (`ConnectInfo<SocketAddr>`), nicht das, was der Worker selbst meldet — das bleibt unfälschbar.
 
 ### 9.4 Lifecycle-States
 
