@@ -5,6 +5,7 @@ pub mod audit;
 pub mod api_keys;
 pub mod settings;
 pub mod models;
+pub mod inference;
 
 use serde::Serialize;
 

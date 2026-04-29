@@ -11,7 +11,7 @@ use crate::{
     auth, ca_store,
     config::MgmtConfig,
     db,
-    handlers::{api_keys, audit, enroll, enroll_token, models, nodes, settings},
+    handlers::{api_keys, audit, enroll, enroll_token, inference, models, nodes, settings},
     state::AppState,
 };
 
@@ -64,6 +64,11 @@ pub async fn run(cfg: MgmtConfig) -> Result<()> {
         // Async: the worker downloads in the background and reports the new
         // status on its next heartbeat.
         .route("/api/v1/models/{id}/load",         post(models::load))
+        // Per-request inference log. POST is service-to-service (openai-api
+        // writes one row per /v1/chat/completions); GET is the read view the
+        // admin UI consumes.
+        .route("/api/v1/inference/log",            post(inference::log))
+        .route("/api/v1/inference/recent",         get(inference::recent))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_admin));
 
     let app = public.merge(admin).with_state(state);

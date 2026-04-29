@@ -81,6 +81,10 @@ services:
       # Source of truth for /v1/models (the admin-editable registry).
       MGMT_BACKEND_URL: http://mgmt:7100
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+    # Local-host bind so the Phase 2 E2E test can hit /v1 without going
+    # through the gateway's mgc_* auth. Production uses the gateway only.
+    ports:
+      - "127.0.0.1:7200:7200"
     expose: ["7200"]
     depends_on: [coordinator]
 
