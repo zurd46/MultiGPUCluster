@@ -664,6 +664,30 @@
     </div>
   </section>
 
+  <!-- Inference request log -->
+  <section class="table-wrap">
+    <div class="table-head">
+      <h3>Recent inference requests <span class="pill info" id="inflog-count">0</span></h3>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <select id="inflog-status" style="background: var(--bg-1); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px;">
+          <option value="">all</option>
+          <option value="ok">success only</option>
+          <option value="errors">errors only</option>
+        </select>
+        <input class="filter" id="inflog-node" type="text" placeholder="Filter by node id…" style="width: 200px;" />
+        <input class="filter" id="inflog-model" type="text" placeholder="Filter by model…" style="width: 160px;" />
+      </div>
+    </div>
+    <div style="overflow-x: auto;">
+      <table id="tbl-inflog">
+        <thead><tr>
+          <th>Time</th><th>Status</th><th>Model</th><th>Node</th><th>Tokens (in/out/total)</th><th>Latency</th><th>API key</th><th>Error</th>
+        </tr></thead>
+        <tbody><tr><td colspan="8" class="empty">enter admin key above…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- Raw JSON -->
   <details class="raw">
     <summary>Raw <code>/overview</code> response</summary>
@@ -1310,6 +1334,64 @@ async function handleModelAction(action, id, status) {
   }
 }
 
+// ---------- inference request log ----------
+async function loadInferenceLog() {
+  if (!adminKey()) {
+    $("tbl-inflog").querySelector("tbody").innerHTML =
+      '<tr><td colspan="8" class="empty">enter admin key above…</td></tr>';
+    $("inflog-count").textContent = "—";
+    return;
+  }
+  // Build the query string from the filter inputs. Empty values are dropped
+  // server-side (mgmt treats null/empty as "no filter") so we just forward.
+  const params = new URLSearchParams();
+  const st = $("inflog-status").value;
+  if (st) params.set("status", st);
+  const node = $("inflog-node").value.trim();
+  if (node) params.set("node_id", node);
+  const model = $("inflog-model").value.trim();
+  if (model) params.set("model", model);
+  params.set("limit", "200");
+  try {
+    const rows = await mgmtCall("GET", "/api/v1/inference/recent?" + params.toString());
+    $("inflog-count").textContent = rows.length;
+    const tbody = $("tbl-inflog").querySelector("tbody");
+    if (rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="empty">no requests yet</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map((r) => {
+      const ok = r.status_code >= 200 && r.status_code < 300;
+      const statusPill = ok
+        ? `<span class="pill ok">${r.status_code}</span>`
+        : `<span class="pill err">${r.status_code}</span>`;
+      const tokens = (r.prompt_tokens != null || r.completion_tokens != null || r.total_tokens != null)
+        ? `${r.prompt_tokens ?? "?"} / ${r.completion_tokens ?? "?"} / ${r.total_tokens ?? "?"}`
+        : "—";
+      const latency = r.latency_ms != null ? `${r.latency_ms} ms` : "—";
+      const errCell = r.error_type
+        ? `<span class="pill warn">${escapeHtml(r.error_type)}</span>` +
+          (r.error_message ? `<div class="muted" style="font-family: var(--mono); font-size: 10px; margin-top: 4px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(r.error_message)}">${escapeHtml(r.error_message)}</div>` : "")
+        : "—";
+      return `
+      <tr>
+        <td class="muted" title="${escapeHtml(r.created_at)}">${escapeHtml(relTime(r.created_at))}</td>
+        <td>${statusPill}</td>
+        <td class="id">${escapeHtml(r.model || "—")}</td>
+        <td class="muted" style="font-family: var(--mono); font-size: 11px;" title="${escapeHtml(r.inference_url || "")}">${escapeHtml(r.node_id || "—")}</td>
+        <td class="muted" style="font-family: var(--mono); font-size: 11px;">${escapeHtml(tokens)}</td>
+        <td class="muted">${escapeHtml(latency)}</td>
+        <td class="muted" style="font-family: var(--mono); font-size: 11px;">${escapeHtml(r.api_key_prefix || "—")}</td>
+        <td>${errCell}</td>
+      </tr>`;
+    }).join("");
+  } catch (e) {
+    $("tbl-inflog").querySelector("tbody").innerHTML =
+      `<tr><td colspan="8" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    $("inflog-count").textContent = "err";
+  }
+}
+
 // ---------- main load ----------
 let lastData = null;
 let lastEffectiveUrl = "";
@@ -1375,13 +1457,18 @@ $("auth-form").addEventListener("submit", (e) => {
   load();
 });
 
-function loadAll() { load(); loadKeys(); loadSettings(); loadModels(); }
+function loadAll() { load(); loadKeys(); loadSettings(); loadModels(); loadInferenceLog(); }
 $("refresh").addEventListener("click", loadAll);
 $("filter-coord").addEventListener("input",  () => lastData && renderTables(renderKpis(lastData)));
 $("filter-mgmt").addEventListener("input",   () => lastData && renderTables(renderKpis(lastData)));
 $("filter-models").addEventListener("input", () => lastData && renderTables(renderKpis(lastData)));
 $("filter-keys").addEventListener("input",   loadKeys);
 $("filter-models-reg").addEventListener("input", loadModels);
+
+// Inference log filters — same loadInferenceLog() refetches on every change.
+$("inflog-status").addEventListener("change", loadInferenceLog);
+$("inflog-node").addEventListener("input", loadInferenceLog);
+$("inflog-model").addEventListener("input", loadInferenceLog);
 
 // Settings + models
 $("settings-save").addEventListener("click", saveSettings);

@@ -1,0 +1,110 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, request_id, endpoint, model, node_id, inference_url,\n               api_key_prefix, prompt_tokens, completion_tokens, total_tokens,\n               latency_ms, status_code, error_type, error_message, created_at\n        FROM inference_log\n        WHERE ($1::text IS NULL OR node_id = $1)\n          AND ($2::text IS NULL OR model   = $2)\n          AND ($3::bool IS FALSE OR error_type IS NOT NULL)\n          AND ($4::bool IS FALSE OR error_type IS NULL)\n        ORDER BY created_at DESC\n        LIMIT $5\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "request_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "endpoint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "model",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "node_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "inference_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "api_key_prefix",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "prompt_tokens",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "completion_tokens",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "total_tokens",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "latency_ms",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 11,
+        "name": "status_code",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "error_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "ba08ae26513592aa86c997804ab34b67315d9f714d03c3269d35cd3080b6db60"
+}

@@ -16,10 +16,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    api_error::{ApiError, ApiResult},
-    state::AppState,
-};
+use crate::{api_error::ApiResult, state::AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct LogRequest {
