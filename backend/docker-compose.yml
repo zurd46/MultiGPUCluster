@@ -69,7 +69,10 @@ services:
     environment:
       RUST_LOG: info
       OPENAI_API_BIND: 0.0.0.0:7200
-      COORDINATOR_URL: http://coordinator:7000
+      # HTTP port (registry / health), not the gRPC bind on 7000. The OpenAI
+      # API only talks HTTP to the coordinator today; gRPC dispatch lands in
+      # Phase 2.
+      COORDINATOR_HTTP_URL: http://coordinator:7001
     expose: ["7200"]
     depends_on: [coordinator]
 

@@ -51,6 +51,12 @@ if(BUILD_RPC_SERVER)
         endif()
         # ggml-rpc is built as part of upstream when GGML_RPC=ON.
         set(GGML_RPC ON CACHE BOOL "" FORCE)
+        # Force upstream to also build its own `rpc-server` (tools/rpc) which we
+        # use as the bringup binary for Phase 2. Our `rpc-server-ext` is a
+        # cluster-aware wrapper that wraps/extends it.
+        set(LLAMA_BUILD_TOOLS ON CACHE BOOL "" FORCE)
+        set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         add_subdirectory(${SUBMODULE_DIR} llama_cpp_build)
     endif()
 

@@ -9,7 +9,9 @@ struct Args {
     #[arg(long, env = "OPENAI_API_BIND", default_value = "0.0.0.0:7200")]
     bind: String,
 
-    #[arg(long, env = "COORDINATOR_URL", default_value = "http://coordinator:7000")]
+    /// HTTP base URL of the coordinator (port 7001), not the gRPC bind. Used
+    /// to discover live nodes for `/v1/models` and (Phase 2) to dispatch jobs.
+    #[arg(long, env = "COORDINATOR_HTTP_URL", default_value = "http://coordinator:7001")]
     coordinator_url: String,
 }
 
