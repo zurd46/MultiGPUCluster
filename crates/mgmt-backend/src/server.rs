@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::{
     middleware,
-    routing::{delete, get, patch, post, put},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde_json::json;

@@ -522,6 +522,87 @@
     </div>
   </section>
 
+  <!-- Cluster settings -->
+  <section class="table-wrap" id="settings-section">
+    <div class="table-head">
+      <h3>Cluster settings</h3>
+      <span class="meta" style="color: var(--muted); font-family: var(--mono); font-size: 11px;">
+        backend → <code>/api/v1/settings</code>
+      </span>
+    </div>
+    <div class="keys-form" id="settings-form" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
+      <div>
+        <label for="set-public-url">Public base URL</label>
+        <input id="set-public-url" type="text" placeholder="https://cluster.example.com" />
+      </div>
+      <div>
+        <label for="set-default-model">Default model</label>
+        <input id="set-default-model" type="text" placeholder="auto" />
+      </div>
+      <div>
+        <label for="set-rate-limit">Rate limit (rpm)</label>
+        <input id="set-rate-limit" type="number" min="1" placeholder="60" />
+      </div>
+      <div>
+        <label for="set-max-tokens">Max tokens default</label>
+        <input id="set-max-tokens" type="number" min="1" placeholder="4096" />
+      </div>
+    </div>
+    <div style="padding: 0 18px 16px; display: flex; gap: 10px; align-items: center;">
+      <button id="settings-save" class="btn primary">💾 Save settings</button>
+      <span id="settings-meta" style="color: var(--muted); font-size: 11px; font-family: var(--mono);"></span>
+    </div>
+    <div id="endpoint-snippet" style="padding: 0 18px 18px; display: none;">
+      <div class="section-head" style="margin-bottom: 8px;">
+        <h2>Client config snippet (LM Studio / OpenAI SDK)</h2>
+      </div>
+      <pre style="background: var(--bg-0); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 12px; line-height: 1.55; overflow:auto;"><code id="endpoint-snippet-content"></code></pre>
+    </div>
+  </section>
+
+  <!-- Model registry -->
+  <section class="table-wrap">
+    <div class="table-head">
+      <h3>Models <span class="pill info" id="models-reg-count">0</span></h3>
+      <input class="filter" id="filter-models-reg" type="text" placeholder="Filter by id, name, status…" />
+    </div>
+    <form class="keys-form" id="model-form" onsubmit="return false;" style="grid-template-columns: 2fr 2fr 1fr 1fr auto;">
+      <div>
+        <label for="model-id">Model ID</label>
+        <input id="model-id" type="text" placeholder="llama-3.1-8b-instruct" required />
+      </div>
+      <div>
+        <label for="model-name">Display name</label>
+        <input id="model-name" type="text" placeholder="Llama 3.1 8B Instruct" />
+      </div>
+      <div>
+        <label for="model-status">Status</label>
+        <select id="model-status">
+          <option value="available">available</option>
+          <option value="loading">loading</option>
+          <option value="disabled">disabled</option>
+          <option value="error">error</option>
+        </select>
+      </div>
+      <div>
+        <label for="model-default" style="white-space: nowrap;">Default?</label>
+        <select id="model-default">
+          <option value="false">no</option>
+          <option value="true">yes</option>
+        </select>
+      </div>
+      <button id="model-create" type="submit" class="btn primary" style="align-self:end;">+ Add model</button>
+    </form>
+    <div style="overflow-x: auto;">
+      <table id="tbl-models-reg">
+        <thead><tr>
+          <th>ID</th><th>Display name</th><th>Status</th><th>Default</th><th>Created</th><th></th>
+        </tr></thead>
+        <tbody><tr><td colspan="6" class="empty">enter admin key above…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- API Keys -->
   <section class="table-wrap">
     <div class="table-head">
@@ -868,6 +949,8 @@ document.addEventListener("click", (e) => {
     handleNodeAction(a, btn.dataset.id);
   } else if (a === "key-revoke" || a === "key-delete" || a === "key-edit") {
     handleKeyAction(a, btn.dataset.id, btn.dataset.name, btn.dataset.scope);
+  } else if (a === "model-delete" || a === "model-toggle" || a === "model-default") {
+    handleModelAction(a, btn.dataset.id, btn.dataset.status);
   }
 });
 
@@ -988,6 +1071,140 @@ async function handleKeyAction(action, id, name, scope) {
   }
 }
 
+// ---------- cluster settings ----------
+let lastSettings = null;
+async function loadSettings() {
+  if (!adminKey()) {
+    $("settings-meta").textContent = "enter admin key above";
+    return;
+  }
+  try {
+    const doc = await mgmtCall("GET", "/api/v1/settings");
+    lastSettings = doc;
+    const v = (k, fallback = "") => {
+      const x = doc[k];
+      if (x === null || x === undefined) return fallback;
+      return typeof x === "string" ? x : String(x);
+    };
+    $("set-public-url").value    = v("public_base_url");
+    $("set-default-model").value = v("default_model", "auto");
+    $("set-rate-limit").value    = v("rate_limit_rpm", "60");
+    $("set-max-tokens").value    = v("max_tokens_default", "4096");
+    $("settings-meta").textContent = "loaded";
+    renderEndpointSnippet(v("public_base_url"));
+  } catch (e) {
+    $("settings-meta").textContent = "error: " + e.message;
+  }
+}
+async function saveSettings() {
+  const body = {
+    public_base_url:    $("set-public-url").value.trim(),
+    default_model:      $("set-default-model").value.trim() || "auto",
+    rate_limit_rpm:     parseInt($("set-rate-limit").value, 10) || 60,
+    max_tokens_default: parseInt($("set-max-tokens").value, 10) || 4096,
+  };
+  try {
+    await mgmtCall("PUT", "/api/v1/settings", body);
+    showToast("settings saved", true);
+    loadSettings();
+  } catch (e) {
+    showToast("save failed: " + e.message);
+  }
+}
+function renderEndpointSnippet(baseUrl) {
+  const wrap = $("endpoint-snippet");
+  if (!baseUrl) { wrap.style.display = "none"; return; }
+  const bu = baseUrl.replace(/\/+$/, "");
+  $("endpoint-snippet-content").textContent =
+    `Base URL:  ${bu}/v1\nAPI key:   <one of the keys below>\n\n` +
+    `# curl example\ncurl -H "Authorization: Bearer mgc_..." ${bu}/v1/models`;
+  wrap.style.display = "block";
+}
+
+// ---------- model registry ----------
+async function loadModels() {
+  if (!adminKey()) {
+    $("tbl-models-reg").querySelector("tbody").innerHTML =
+      '<tr><td colspan="6" class="empty">enter admin key above…</td></tr>';
+    $("models-reg-count").textContent = "—";
+    return;
+  }
+  try {
+    const rows = await mgmtCall("GET", "/api/v1/models");
+    const filter = ($("filter-models-reg").value || "").toLowerCase().trim();
+    const filtered = filter
+      ? rows.filter((r) => ["id", "display_name", "status"].some((k) =>
+          String(r[k] ?? "").toLowerCase().includes(filter)))
+      : rows;
+    $("models-reg-count").textContent = rows.length;
+    const tbody = $("tbl-models-reg").querySelector("tbody");
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty">${rows.length === 0
+        ? "no models registered yet"
+        : "no matches"}</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtered.map((r) => `
+      <tr>
+        <td class="id">${escapeHtml(r.id)}</td>
+        <td>${escapeHtml(r.display_name || "—")}</td>
+        <td>${pillFor(r.status)}</td>
+        <td>${r.is_default ? '<span class="pill ok">default</span>' : '<span class="pill muted">—</span>'}</td>
+        <td class="muted">${escapeHtml(relTime(r.created_at))}</td>
+        <td>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="key-action" data-action="model-toggle"
+                    data-id="${escapeHtml(r.id)}" data-status="${escapeHtml(r.status)}">
+              ${r.status === "disabled" ? "Enable" : "Disable"}
+            </button>
+            ${r.is_default ? "" : `<button class="key-action" data-action="model-default" data-id="${escapeHtml(r.id)}">Set default</button>`}
+            <button class="key-action" data-action="model-delete" data-id="${escapeHtml(r.id)}">Delete</button>
+          </div>
+        </td>
+      </tr>`).join("");
+  } catch (e) {
+    $("tbl-models-reg").querySelector("tbody").innerHTML =
+      `<tr><td colspan="6" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    $("models-reg-count").textContent = "err";
+  }
+}
+async function createModel() {
+  const id = $("model-id").value.trim();
+  if (!id) { showToast("Model ID is required"); return; }
+  const body = {
+    id,
+    display_name: $("model-name").value.trim(),
+    status:       $("model-status").value,
+    is_default:   $("model-default").value === "true",
+  };
+  try {
+    await mgmtCall("POST", "/api/v1/models", body);
+    showToast("model added", true);
+    $("model-id").value = ""; $("model-name").value = "";
+    loadModels();
+  } catch (e) {
+    showToast("add failed: " + e.message);
+  }
+}
+async function handleModelAction(action, id, status) {
+  if (action === "model-delete") {
+    if (!confirm(`Delete model ${id}? Removes it from /v1/models immediately.`)) return;
+    try { await mgmtCall("DELETE", `/api/v1/models/${encodeURIComponent(id)}`); showToast("deleted", true); loadModels(); }
+    catch (e) { showToast("delete failed: " + e.message); }
+    return;
+  }
+  if (action === "model-toggle") {
+    const next = status === "disabled" ? "available" : "disabled";
+    try { await mgmtCall("PATCH", `/api/v1/models/${encodeURIComponent(id)}`, { status: next }); showToast(`set to ${next}`, true); loadModels(); }
+    catch (e) { showToast("update failed: " + e.message); }
+    return;
+  }
+  if (action === "model-default") {
+    try { await mgmtCall("PATCH", `/api/v1/models/${encodeURIComponent(id)}`, { is_default: true }); showToast("default set", true); loadModels(); }
+    catch (e) { showToast("update failed: " + e.message); }
+  }
+}
+
 // ---------- main load ----------
 let lastData = null;
 
@@ -1044,11 +1261,17 @@ $("auth-form").addEventListener("submit", (e) => {
   load();
 });
 
-$("refresh").addEventListener("click", () => { load(); loadKeys(); });
+function loadAll() { load(); loadKeys(); loadSettings(); loadModels(); }
+$("refresh").addEventListener("click", loadAll);
 $("filter-coord").addEventListener("input",  () => lastData && renderTables(renderKpis(lastData)));
 $("filter-mgmt").addEventListener("input",   () => lastData && renderTables(renderKpis(lastData)));
 $("filter-models").addEventListener("input", () => lastData && renderTables(renderKpis(lastData)));
 $("filter-keys").addEventListener("input",   loadKeys);
+$("filter-models-reg").addEventListener("input", loadModels);
+
+// Settings + models
+$("settings-save").addEventListener("click", saveSettings);
+$("model-form").addEventListener("submit", (e) => { e.preventDefault(); createModel(); });
 
 // API keys
 $("key-form").addEventListener("submit", (e) => { e.preventDefault(); createKey(); });
@@ -1069,9 +1292,8 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-load();
-loadKeys();
-setInterval(() => { load(); loadKeys(); }, REFRESH_MS);
+loadAll();
+setInterval(loadAll, REFRESH_MS);
 </script>
 
 </body>
