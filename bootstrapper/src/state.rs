@@ -7,6 +7,11 @@ pub struct Identity {
     pub node_id: String,
     pub signing_key_b64: String,
     pub client_cert_pem: String,
+    /// Private key for the client mTLS cert above. Loaded by the worker into
+    /// its `reqwest::Identity` so all `/cluster/*` heartbeats present a valid
+    /// chain to the gateway.
+    #[serde(default)]
+    pub client_key_pem: String,
     pub ca_chain_pem: String,
     pub wg_config_ini: Option<String>,
     pub coordinator_endpoint: String,

@@ -19,6 +19,8 @@ struct EnrollPayload<'a> {
 struct EnrollResponse {
     node_id: String,
     client_cert_pem: String,
+    #[serde(default)]
+    client_key_pem: String,
     ca_chain_pem: String,
     #[serde(default)]
     wg_config_ini: Option<String>,
@@ -70,6 +72,7 @@ pub async fn run(backend: &str, token: &str, display_name: Option<&str>, insecur
         node_id: resp.node_id,
         signing_key_b64: priv_b64,
         client_cert_pem: resp.client_cert_pem,
+        client_key_pem:  resp.client_key_pem,
         ca_chain_pem: resp.ca_chain_pem,
         wg_config_ini: resp.wg_config_ini,
         coordinator_endpoint: resp.coordinator_endpoint,

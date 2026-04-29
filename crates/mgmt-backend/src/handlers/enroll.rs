@@ -44,6 +44,10 @@ impl EnrollRequest {
 pub struct EnrollResponse {
     pub node_id: String,
     pub client_cert_pem: String,
+    /// Private key the worker uses for mTLS. Sent over the (TLS-encrypted)
+    /// enrollment channel exactly once; the bootstrapper persists it in
+    /// `identity.json` mode 0600 and never transmits it again.
+    pub client_key_pem: String,
     pub ca_chain_pem: String,
     pub coordinator_endpoint: String,
     pub cert_expires_at: String,
@@ -197,6 +201,7 @@ pub async fn complete(
     Ok(Json(EnrollResponse {
         node_id: node_id.to_string(),
         client_cert_pem: issued.cert_pem,
+        client_key_pem:  issued.key_pem,
         ca_chain_pem: s.ca.cert_pem(),
         coordinator_endpoint: s.coordinator_endpoint.clone(),
         cert_expires_at: cert_expires.to_rfc3339(),
