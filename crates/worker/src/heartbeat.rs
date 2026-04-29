@@ -20,6 +20,11 @@
 //!   - `inference_endpoint`: `:port` of the llama-server, when one is loaded.
 //!   - `control_endpoint`:   `:port` of the worker's control plane (always).
 //!   - `current_model`:      logical id of the loaded model, when any.
+//!
+//! `publish_draining` is a one-shot variant invoked from the shutdown handler:
+//! it posts a single report with `status = Draining` so the coordinator can
+//! mark the node out-of-rotation immediately (instead of waiting up to 60 s
+//! for the heartbeat watchdog to time it out).
 
 use crate::inference_server::SharedSupervisor;
 use gpucluster_proto::node as pb;
@@ -28,6 +33,9 @@ use std::time::Duration;
 use tokio::time::interval;
 
 const HEARTBEAT_PERIOD: Duration = Duration::from_secs(30);
+/// Tighter timeout for the final draining heartbeat — we don't want to
+/// stall worker shutdown for 10 s if the coordinator is also down.
+const SHUTDOWN_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub async fn run_loop(
     coordinator_url: String,
@@ -133,4 +141,30 @@ async fn publish(
         }
         Err(e) => tracing::warn!(error = %e, %url, "inventory upload failed"),
     }
+}
+
+/// One-shot heartbeat with `status = Draining`, called from the worker's
+/// shutdown handler. Best-effort: a short timeout so a wedged coordinator
+/// doesn't delay worker exit; failure is logged but never surfaced.
+pub async fn publish_draining(
+    coordinator_url: &str,
+    info: &pb::NodeInfo,
+    sup: &SharedSupervisor,
+    control_endpoint: &str,
+) {
+    let client = match reqwest::Client::builder()
+        .timeout(SHUTDOWN_HEARTBEAT_TIMEOUT)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "couldn't build draining-heartbeat client");
+            return;
+        }
+    };
+    let report_url = format!("{}/nodes/report", coordinator_url.trim_end_matches('/'));
+    let mut draining = info.clone();
+    draining.status = pb::NodeStatus::Draining as i32;
+    tracing::info!(node = %draining.node_id, "publishing draining heartbeat");
+    publish(&client, &report_url, &draining, sup, control_endpoint).await;
 }

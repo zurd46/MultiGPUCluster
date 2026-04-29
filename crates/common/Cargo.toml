@@ -15,3 +15,6 @@ tracing.workspace = true
 
 # clients module — typed HTTP wrappers for cluster-internal calls.
 reqwest.workspace = true
+
+# nodes module — serde-derived view of pb::NodeInfo for the JSON wire format.
+gpucluster-proto.workspace = true

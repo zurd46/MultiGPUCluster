@@ -1,6 +1,7 @@
 pub mod clients;
 pub mod error;
 pub mod ids;
+pub mod nodes;
 pub mod ports;
 
 pub use error::{ClusterError, Result};

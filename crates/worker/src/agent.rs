@@ -52,6 +52,59 @@ pub async fn run(cfg: WorkerConfig) -> Result<()> {
     );
     let control_endpoint = control_server::endpoint_advertise(control_server::DEFAULT_CONTROL_PORT);
 
-    heartbeat::run_loop(cfg.coordinator_url.clone(), info, sup, control_endpoint).await;
+    // Run heartbeat until either it returns (it never does in normal flow)
+    // or a shutdown signal arrives. On signal: publish a draining heartbeat
+    // so the coordinator marks us out-of-rotation immediately, then drop the
+    // supervisor to kill llama-server before exit.
+    let coordinator_url = cfg.coordinator_url.clone();
+    let info_for_drain = info.clone();
+    let control_for_drain = control_endpoint.clone();
+    let sup_for_drain = sup.clone();
+    tokio::select! {
+        _ = heartbeat::run_loop(coordinator_url.clone(), info, sup.clone(), control_endpoint) => {
+            tracing::warn!("heartbeat loop exited unexpectedly");
+        }
+        _ = wait_for_shutdown_signal() => {
+            tracing::info!("shutdown signal received; draining");
+            heartbeat::publish_draining(
+                &coordinator_url,
+                &info_for_drain,
+                &sup_for_drain,
+                &control_for_drain,
+            )
+            .await;
+        }
+    }
     Ok(())
+}
+
+/// Resolves when the worker should shut down. On Unix we listen for both
+/// SIGTERM (the orchestrator-friendly stop signal) and SIGINT (Ctrl-C in
+/// dev). On other platforms only Ctrl-C is wired up.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let term = signal(SignalKind::terminate());
+        let intr = signal(SignalKind::interrupt());
+        match (term, intr) {
+            (Ok(mut term), Ok(mut intr)) => {
+                tokio::select! {
+                    _ = term.recv() => tracing::info!("received SIGTERM"),
+                    _ = intr.recv() => tracing::info!("received SIGINT"),
+                }
+            }
+            _ => {
+                // If we can't install the unix handlers, fall back to ctrl_c
+                // — better than ignoring shutdown entirely.
+                let _ = tokio::signal::ctrl_c().await;
+                tracing::info!("received Ctrl-C (signal install fallback)");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("received Ctrl-C");
+    }
 }

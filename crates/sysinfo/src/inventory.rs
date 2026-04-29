@@ -111,6 +111,10 @@ pub fn format_human(info: &pb::NodeInfo) -> String {
 /// `/cluster/nodes/report` heartbeats. Kept hand-written instead of letting
 /// prost+serde derive it so the field names stay stable across proto evolutions
 /// (the dashboard and DB schema can rely on these keys without a regen step).
+///
+/// Includes `status` (snake-case enum string) so a graceful-shutdown
+/// heartbeat with `pb::NodeStatus::Draining` propagates through the
+/// coordinator instead of getting silently overwritten to "online".
 pub fn to_json(info: &pb::NodeInfo) -> Value {
     json!({
         "node_id":          info.node_id,
@@ -119,11 +123,25 @@ pub fn to_json(info: &pb::NodeInfo) -> Value {
         "hw_fingerprint":   info.hw_fingerprint,
         "agent_version":    info.agent_version,
         "tags":             info.tags,
+        "status":           status_label(info.status),
         "os":               info.os.as_ref().map(os_json).unwrap_or(Value::Null),
         "cpu_mem":          info.cpu_mem.as_ref().map(cpu_mem_json).unwrap_or(Value::Null),
         "network":          info.network.as_ref().map(net_json).unwrap_or(Value::Null),
         "gpus":             info.gpus.iter().map(gpu_json).collect::<Vec<_>>(),
     })
+}
+
+fn status_label(status: i32) -> &'static str {
+    match pb::NodeStatus::try_from(status).unwrap_or(pb::NodeStatus::Unspecified) {
+        pb::NodeStatus::Unspecified     => "unspecified",
+        pb::NodeStatus::PendingApproval => "pending_approval",
+        pb::NodeStatus::Online          => "online",
+        pb::NodeStatus::Degraded        => "degraded",
+        pb::NodeStatus::Draining        => "draining",
+        pb::NodeStatus::Offline         => "offline",
+        pb::NodeStatus::Quarantined     => "quarantined",
+        pb::NodeStatus::Revoked         => "revoked",
+    }
 }
 
 fn os_json(os: &pb::OsInfo) -> Value {

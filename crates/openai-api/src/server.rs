@@ -113,6 +113,87 @@ struct RequestTrace {
     error_message: Option<String>,
 }
 
+/// Initialise the trace from the incoming request. Same logic for the JSON
+/// and streaming paths — extracts request_id (gateway propagation),
+/// api_key_prefix (for log attribution), and the requested `model` field.
+fn populate_trace(headers: &HeaderMap, req: &serde_json::Value, trace: &mut RequestTrace) {
+    trace.request_id = headers
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    trace.api_key_prefix = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .map(|tok| tok.chars().take(12).collect::<String>())
+        .filter(|p| p.starts_with("mgc_"));
+    trace.model = req
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto")
+        .to_string();
+}
+
+/// What dispatching can fail with. Distinct variants mirror what we want to
+/// emit as `trace.error_type` and what HTTP status the customer should see.
+/// The two callers map each variant to their respective return shape (JSON
+/// tuple vs. streaming Response) — the matching is mechanical.
+enum DispatchFailure {
+    CoordError { status: u16, body: String },
+    CoordUnreachable(String),
+    NoEligibleNodes,
+    NoInferenceEndpoint { chosen: serde_json::Value },
+}
+
+/// Pick a worker via the coordinator and return its `inference_url`. Tags
+/// `trace.node_id` + `trace.inference_url` along the way so even a failed
+/// forward records who we tried.
+///
+/// "Picked" = first node with an `inference_url` set (i.e. a llama-server
+/// is up). Falls back to the first eligible node so callers can produce a
+/// useful `chosen_worker` body in the no_inference_endpoint case.
+async fn dispatch(
+    s: &ApiState,
+    trace: &mut RequestTrace,
+) -> Result<String, DispatchFailure> {
+    let resp = match s.coord.eligible_nodes().await {
+        Ok(v) => v,
+        Err(ClientError::Upstream { status, body, .. }) => {
+            return Err(DispatchFailure::CoordError { status, body });
+        }
+        Err(other) => return Err(DispatchFailure::CoordUnreachable(other.to_string())),
+    };
+
+    let nodes = resp
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let chosen = nodes
+        .iter()
+        .find(|n| n.get("inference_url").and_then(|v| v.as_str()).is_some())
+        .cloned()
+        .or_else(|| nodes.first().cloned());
+    let Some(chosen) = chosen else {
+        return Err(DispatchFailure::NoEligibleNodes);
+    };
+
+    trace.node_id = chosen
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    trace.inference_url = chosen
+        .get("inference_url")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    match trace.inference_url.clone() {
+        Some(url) => Ok(url),
+        None => Err(DispatchFailure::NoInferenceEndpoint { chosen }),
+    }
+}
+
 /// Top-level handler. Inspects the request body for `stream: true` and routes
 /// to either the JSON dispatcher (full response, single body) or the streaming
 /// dispatcher (SSE passthrough from llama-server).
@@ -142,140 +223,19 @@ async fn chat_completions_json(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let started = Instant::now();
     let mut trace = RequestTrace::default();
-
-    // Pick up identifiers from the request before we do anything else, so
-    // even an early-failure log row carries the customer-visible context.
-    trace.request_id = headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(String::from);
-    trace.api_key_prefix = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .map(|tok| tok.chars().take(12).collect::<String>())
-        .filter(|p| p.starts_with("mgc_"));
-    trace.model = req
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("auto")
-        .to_string();
+    populate_trace(&headers, &req, &mut trace);
     let req_messages_len = req
         .get("messages")
         .and_then(|v| v.as_array())
         .map(|a| a.len())
         .unwrap_or(0);
 
-    // Pull the eligible-nodes view from the coordinator. This is also where
-    // the dispatcher's first failure mode lives — if the coordinator is down
-    // or returns garbage, we tag the trace and bail. The two ClientError
-    // variants we care about have different semantics (Upstream = HTTP error
-    // from the peer, anything else = transport / decode failure) so we map
-    // them to distinct trace error_types.
-    let resp = match s.coord.eligible_nodes().await {
-        Ok(v) => v,
-        Err(ClientError::Upstream { status, body, .. }) => {
-            return finalize_error(
-                &s,
-                trace,
-                started,
-                StatusCode::BAD_GATEWAY,
-                "coordinator_error",
-                format!("coordinator returned {status}: {body}"),
-                serde_json::json!({
-                    "error": { "type": "coordinator_error", "status": status }
-                }),
-            )
-            .await;
+    let inference_url = match dispatch(&s, &mut trace).await {
+        Ok(u) => u,
+        Err(failure) => {
+            let (status, error_type, message, body) = json_failure_payload(&trace, failure);
+            return finalize_error(&s, trace, started, status, error_type, message, body).await;
         }
-        Err(other) => {
-            let msg = other.to_string();
-            return finalize_error(
-                &s,
-                trace,
-                started,
-                StatusCode::BAD_GATEWAY,
-                "coordinator_unreachable",
-                msg.clone(),
-                serde_json::json!({
-                    "error": { "type": "coordinator_unreachable", "message": msg }
-                }),
-            )
-            .await;
-        }
-    };
-
-    let nodes = resp
-        .get("nodes")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    // Prefer a node that already has an inference endpoint (llama-server with
-    // a model loaded). Falling back to "first eligible" lets us keep the 501
-    // message informative when no worker has a model yet.
-    let chosen = nodes
-        .iter()
-        .find(|n| {
-            n.get("inference_url")
-                .and_then(|v| v.as_str())
-                .is_some()
-        })
-        .cloned()
-        .or_else(|| nodes.first().cloned());
-
-    let Some(chosen) = chosen else {
-        let req_model_owned = trace.model.clone();
-        return finalize_error(
-            &s,
-            trace,
-            started,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "no_eligible_nodes",
-            "no worker is currently online with a usable GPU".into(),
-            serde_json::json!({
-                "error": {
-                    "type": "no_eligible_nodes",
-                    "message": "no worker is currently online with a usable GPU",
-                    "request_model": req_model_owned,
-                }
-            }),
-        )
-        .await;
-    };
-
-    // Tag the trace with whatever the dispatcher chose, even before we know
-    // the call will succeed — that way even a failed forward records who
-    // got asked.
-    trace.node_id = chosen
-        .get("node_id")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    trace.inference_url = chosen
-        .get("inference_url")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    let Some(inference_url) = trace.inference_url.clone() else {
-        let req_model_owned = trace.model.clone();
-        return finalize_error(
-            &s,
-            trace,
-            started,
-            StatusCode::NOT_IMPLEMENTED,
-            "no_inference_endpoint",
-            "a worker is online but no model is loaded".into(),
-            serde_json::json!({
-                "error": {
-                    "type": "no_inference_endpoint",
-                    "message": "a worker is online but no model is loaded — load a model from the admin UI",
-                    "phase": "2-dispatcher",
-                    "request_model": req_model_owned,
-                    "chosen_worker": chosen,
-                }
-            }),
-        )
-        .await;
     };
 
     // Forward the original chat-completion request to the chosen worker's
@@ -400,72 +360,17 @@ async fn chat_completions_stream(
 ) -> Response {
     let started = Instant::now();
     let mut trace = RequestTrace::default();
+    populate_trace(&headers, &req, &mut trace);
 
-    trace.request_id = headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(String::from);
-    trace.api_key_prefix = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .map(|tok| tok.chars().take(12).collect::<String>())
-        .filter(|p| p.starts_with("mgc_"));
-    trace.model = req
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("auto")
-        .to_string();
-
-    // 1) pick a worker via the coordinator
-    let resp_json = match s.coord.eligible_nodes().await {
-        Ok(v) => v,
-        Err(ClientError::Upstream { status, body, .. }) => {
-            return stream_error(
-                &s,
-                trace,
-                started,
-                StatusCode::BAD_GATEWAY,
-                "coordinator_error",
-                format!("coordinator returned {status}: {body}"),
-            )
-            .await;
-        }
-        Err(other) => {
-            return stream_error(
-                &s,
-                trace,
-                started,
-                StatusCode::BAD_GATEWAY,
-                "coordinator_unreachable",
-                other.to_string(),
-            )
-            .await;
+    let inference_url = match dispatch(&s, &mut trace).await {
+        Ok(u) => u,
+        Err(failure) => {
+            let (status, error_type, message) = stream_failure_payload(failure);
+            return stream_error(&s, trace, started, status, error_type, message).await;
         }
     };
 
-    let chosen = resp_json
-        .get("nodes")
-        .and_then(|v| v.as_array())
-        .and_then(|a| a.iter().find(|n| n.get("inference_url").and_then(|v| v.as_str()).is_some()).cloned()
-            .or_else(|| a.first().cloned()));
-
-    let Some(chosen) = chosen else {
-        return stream_error(&s, trace, started,
-            StatusCode::SERVICE_UNAVAILABLE, "no_eligible_nodes",
-            "no worker is currently online with a usable GPU".into()).await;
-    };
-
-    trace.node_id = chosen.get("node_id").and_then(|v| v.as_str()).map(String::from);
-    trace.inference_url = chosen.get("inference_url").and_then(|v| v.as_str()).map(String::from);
-
-    let Some(inference_url) = trace.inference_url.clone() else {
-        return stream_error(&s, trace, started,
-            StatusCode::NOT_IMPLEMENTED, "no_inference_endpoint",
-            "a worker is online but no model is loaded".into()).await;
-    };
-
-    // 2) forward the request to the worker and pass its byte stream through
+    // Forward the request to the worker and pass its byte stream through
     let upstream = format!("{}/v1/chat/completions", inference_url.trim_end_matches('/'));
     tracing::info!(
         upstream = %upstream,
@@ -529,6 +434,91 @@ async fn stream_error(
         "error": { "type": error_type, "message": error_message }
     });
     (status, Json(body)).into_response()
+}
+
+/// Streaming-path equivalent of `json_failure_payload`. Simpler because
+/// `stream_error` builds a fixed `{ error: { type, message } }` body — we
+/// only need to hand it the status, error type tag, and human message.
+fn stream_failure_payload(failure: DispatchFailure) -> (StatusCode, &'static str, String) {
+    match failure {
+        DispatchFailure::CoordError { status, body } => (
+            StatusCode::BAD_GATEWAY,
+            "coordinator_error",
+            format!("coordinator returned {status}: {body}"),
+        ),
+        DispatchFailure::CoordUnreachable(msg) => {
+            (StatusCode::BAD_GATEWAY, "coordinator_unreachable", msg)
+        }
+        DispatchFailure::NoEligibleNodes => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no_eligible_nodes",
+            "no worker is currently online with a usable GPU".into(),
+        ),
+        DispatchFailure::NoInferenceEndpoint { .. } => (
+            StatusCode::NOT_IMPLEMENTED,
+            "no_inference_endpoint",
+            "a worker is online but no model is loaded".into(),
+        ),
+    }
+}
+
+/// Maps a [`DispatchFailure`] to the JSON dispatcher's customer-facing
+/// shape: HTTP status, trace error_type, log message, response body. The
+/// streaming dispatcher has its own simpler mapping in `stream_failure_payload`.
+fn json_failure_payload(
+    trace: &RequestTrace,
+    failure: DispatchFailure,
+) -> (StatusCode, &'static str, String, serde_json::Value) {
+    match failure {
+        DispatchFailure::CoordError { status, body } => (
+            StatusCode::BAD_GATEWAY,
+            "coordinator_error",
+            format!("coordinator returned {status}: {body}"),
+            serde_json::json!({
+                "error": { "type": "coordinator_error", "status": status }
+            }),
+        ),
+        DispatchFailure::CoordUnreachable(msg) => (
+            StatusCode::BAD_GATEWAY,
+            "coordinator_unreachable",
+            msg.clone(),
+            serde_json::json!({
+                "error": { "type": "coordinator_unreachable", "message": msg }
+            }),
+        ),
+        DispatchFailure::NoEligibleNodes => {
+            let model = trace.model.clone();
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no_eligible_nodes",
+                "no worker is currently online with a usable GPU".into(),
+                serde_json::json!({
+                    "error": {
+                        "type": "no_eligible_nodes",
+                        "message": "no worker is currently online with a usable GPU",
+                        "request_model": model,
+                    }
+                }),
+            )
+        }
+        DispatchFailure::NoInferenceEndpoint { chosen } => {
+            let model = trace.model.clone();
+            (
+                StatusCode::NOT_IMPLEMENTED,
+                "no_inference_endpoint",
+                "a worker is online but no model is loaded".into(),
+                serde_json::json!({
+                    "error": {
+                        "type": "no_inference_endpoint",
+                        "message": "a worker is online but no model is loaded — load a model from the admin UI",
+                        "phase": "2-dispatcher",
+                        "request_model": model,
+                        "chosen_worker": chosen,
+                    }
+                }),
+            )
+        }
+    }
 }
 
 /// Single exit point for the failure paths: tags the trace, fires off the log

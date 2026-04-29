@@ -29,7 +29,12 @@ pub fn collect() -> anyhow::Result<pb::NodeInfo> {
         network: Some(network),
         cpu_mem: Some(cpu_mem),
         geo: None,
-        status: pb::NodeStatus::Unspecified as i32,
+        // A worker that just collected fresh inventory is by definition
+        // online — no other status is reachable from `collect()`. The
+        // shutdown handler overrides this to `Draining` for the final
+        // heartbeat; everything else relies on this default flowing through
+        // the JSON wire format and being respected by the coordinator.
+        status: pb::NodeStatus::Online as i32,
         first_seen: 0,
         last_heartbeat: 0,
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
