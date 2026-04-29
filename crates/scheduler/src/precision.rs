@@ -33,7 +33,7 @@ impl Precision {
 pub fn cluster_gcd(gpus: &[&pb::GpuInfo]) -> Precision {
     // Start with the most aggressive and walk down until everyone agrees.
     for &p in &[Precision::Fp4, Precision::Fp8, Precision::Bf16, Precision::Fp16] {
-        if gpus.iter().all(|g| g.capability.as_ref().map_or(false, |c| p.supported_by(c))) {
+        if gpus.iter().all(|g| g.capability.as_ref().is_some_and(|c| p.supported_by(c))) {
             return p;
         }
     }

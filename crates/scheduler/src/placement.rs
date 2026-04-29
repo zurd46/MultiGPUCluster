@@ -18,7 +18,7 @@ impl Placer for GreedyVramWeighted {
             .filter(|(_, g)| {
                 g.capability
                     .as_ref()
-                    .map_or(false, |c| req.required_precision.supported_by(c))
+                    .is_some_and(|c| req.required_precision.supported_by(c))
             })
             .collect();
 

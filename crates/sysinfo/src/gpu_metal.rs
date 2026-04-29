@@ -161,13 +161,11 @@ struct AppleFamily {
     generation: u32,
     /// "", "Pro", "Max", "Ultra"
     variant: &'static str,
-    /// raw label, e.g. "Apple M3 Max"
-    label: String,
 }
 
 impl AppleFamily {
-    fn generic(label: &str) -> Self {
-        Self { generation: 0, variant: "", label: label.to_string() }
+    fn generic(_label: &str) -> Self {
+        Self { generation: 0, variant: "" }
     }
 
     fn arch_string(&self) -> String {
@@ -218,5 +216,6 @@ fn parse_family(name: &str) -> Option<AppleFamily> {
         Some("Ultra") => "Ultra",
         _             => "",
     };
-    Some(AppleFamily { generation, variant, label: name.to_string() })
+    let _ = name;
+    Some(AppleFamily { generation, variant })
 }
