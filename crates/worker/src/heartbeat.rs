@@ -22,7 +22,11 @@ use tokio::time::interval;
 
 const HEARTBEAT_PERIOD: Duration = Duration::from_secs(30);
 
-pub async fn run_loop(coordinator_url: String, mut info: pb::NodeInfo) {
+pub async fn run_loop(
+    coordinator_url: String,
+    mut info: pb::NodeInfo,
+    inference_endpoint: Option<String>,
+) {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -33,7 +37,7 @@ pub async fn run_loop(coordinator_url: String, mut info: pb::NodeInfo) {
 
     // Initial publish — happens before the first interval tick so the
     // gateway has the inventory within milliseconds of worker start.
-    publish(&client, &report_url, &info).await;
+    publish(&client, &report_url, &info, inference_endpoint.as_deref()).await;
 
     let mut tick = interval(HEARTBEAT_PERIOD);
     tick.tick().await; // consume the immediate first tick
@@ -51,12 +55,25 @@ pub async fn run_loop(coordinator_url: String, mut info: pb::NodeInfo) {
             }
             Err(e) => tracing::warn!(error = %e, "sysinfo refresh failed; reusing last snapshot"),
         }
-        publish(&client, &report_url, &info).await;
+        publish(&client, &report_url, &info, inference_endpoint.as_deref()).await;
     }
 }
 
-async fn publish(client: &reqwest::Client, url: &str, info: &pb::NodeInfo) {
-    let body = inventory::to_json(info);
+async fn publish(
+    client: &reqwest::Client,
+    url: &str,
+    info: &pb::NodeInfo,
+    inference_endpoint: Option<&str>,
+) {
+    let mut body = inventory::to_json(info);
+    if let (Some(ep), serde_json::Value::Object(map)) = (inference_endpoint, &mut body) {
+        // Worker reports `:50053` (port-only); coordinator pairs it with the
+        // observed public/wg IP to build a fully-qualified URL.
+        map.insert(
+            "inference_endpoint".into(),
+            serde_json::Value::String(ep.to_string()),
+        );
+    }
     match client.post(url).json(&body).send().await {
         Ok(r) => {
             if r.status().is_success() {

@@ -1,4 +1,4 @@
-use crate::{config::WorkerConfig, identity, heartbeat, rpc_backend};
+use crate::{config::WorkerConfig, heartbeat, identity, inference_server, rpc_backend};
 use anyhow::Result;
 use gpucluster_sysinfo::inventory;
 
@@ -25,11 +25,36 @@ pub async fn run(cfg: WorkerConfig) -> Result<()> {
     let _rpc = match rpc_backend::RpcServer::spawn(backend, 50052) {
         Ok(s) => Some(s),
         Err(e) => {
-            tracing::warn!(error = %e, "rpc-server-ext failed to start; node will run inference-ineligible");
+            tracing::warn!(error = %e, "rpc-server-ext failed to start; node stays inference-ineligible at the RPC layer");
             None
         }
     };
 
-    heartbeat::run_loop(cfg.coordinator_url.clone(), info).await;
+    // Phase 2 single-worker inference: when MODEL_PATH is set, also spawn
+    // `llama-server` on port 50053. The coordinator-eligible view advertises
+    // this endpoint so the cluster's openai-api can forward chat requests.
+    let inference = match inference_server::InferenceServer::try_spawn(
+        inference_server::DEFAULT_INFERENCE_PORT,
+    ) {
+        Ok(Some(srv)) => {
+            tracing::info!(port = srv.port, "inference endpoint live");
+            Some(srv)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "llama-server failed to start; inference disabled on this node");
+            None
+        }
+    };
+    let inference_endpoint = inference.as_ref().map(|s| {
+        // The worker doesn't know its own externally-routable IP yet; the
+        // coordinator captures it from the incoming TCP socket. So we only
+        // advertise the port — the dispatcher pairs it with the public/wg IP
+        // it already has from /nodes/eligible.
+        format!(":{}", s.port)
+    });
+    let _inference = inference;
+
+    heartbeat::run_loop(cfg.coordinator_url.clone(), info, inference_endpoint).await;
     Ok(())
 }

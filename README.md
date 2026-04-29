@@ -23,6 +23,8 @@ The system is designed for **mixed hardware** — NVIDIA GPUs (RTX 5060 Ti + RTX
 - **LM Studio compatible** — exposes `/v1/chat/completions` and `/v1/models` via an OpenAI-compatible layer.
 - **Backend = system image, clients = containers or native binary** — a single `docker compose up` brings up the entire control plane; macOS workers ship as a native `.pkg`.
 - **One URL for everything** — Caddy → Gateway fans out `/api/*` (mgmt), `/cluster/*` (coordinator), `/v1/*` (openai-api), `/enroll` (worker enrollment). A built-in **Cluster Management UI** on `/` aggregates all services live (KPI tiles, node-status donut, searchable tables, auto-refresh every 5 s); `/overview` returns the same data as JSON.
+- **OpenAI-compatible URL with API keys** — `/v1/*` is bearer-protected. Customer keys (`mgc_*`) are minted in the admin UI, validated by the gateway against the mgmt-backend (Argon2id), and cached for 60 s to keep the verify hop off the hot path.
+- **Live-editable backend config** — public base URL, default model, rate limits, **and the model registry that feeds `/v1/models`** are managed directly in the admin UI; node `pending_approval` / approve / drain / revoke actions ship in the same page.
 
 ---
 
@@ -137,15 +139,18 @@ The admin page on `/` shows live service health, the coordinator's node registry
 
 #### Routes exposed under the one URL
 
-| Path | Upstream | Purpose |
-|---|---|---|
-| `/` | gateway | Cluster Management UI |
-| `/overview` | gateway | JSON aggregator (services + nodes + models) |
-| `/health`, `/ready` | gateway | Liveness / readiness |
-| `/api/v1/...` | mgmt-backend (`:7100`) | Users, nodes, enrollment tokens, audit |
-| `/cluster/...` | coordinator HTTP (`:7001`) | Node registry, heartbeat-derived state |
-| `/v1/...` | openai-api (`:7200`) | OpenAI-compatible chat / models |
-| `/enroll` | mgmt-backend | Worker enrollment (alias for `/api/v1/enroll`) |
+| Path | Upstream | Purpose | Auth |
+|---|---|---|---|
+| `/` | gateway | Cluster Management UI | none (admin key entered in UI) |
+| `/overview` | gateway | JSON aggregator (services + nodes + models) | optional admin |
+| `/health`, `/ready` | gateway | Liveness / readiness | none |
+| `/api/v1/nodes`, `/api/v1/audit`, `/api/v1/enroll/tokens` | mgmt | Node + audit + enrollment-token admin | `Authorization: Bearer ADMIN_API_KEY` |
+| `/api/v1/keys`, `/api/v1/keys/{id}`, `/api/v1/keys/{id}/revoke`, `/api/v1/keys/verify` | mgmt | Customer-key CRUD + service-side verify | admin |
+| `/api/v1/settings` (GET/PUT) | mgmt | Cluster-wide settings KV (public base URL, default model, rate limit, max tokens) | admin |
+| `/api/v1/models` (GET/POST) · `/api/v1/models/{id}` (PATCH/DELETE) | mgmt | Model registry powering `/v1/models` | admin |
+| `/cluster/nodes`, `/cluster/nodes/eligible`, `/cluster/nodes/report` | coordinator (`:7001`) | Live registry + dispatch view + worker upload | mTLS (workers) / none in dev |
+| `/v1/models`, `/v1/chat/completions` | openai-api (`:7200`) | OpenAI-compatible | `Authorization: Bearer mgc_<token>` (customer key) |
+| `/enroll` | mgmt | Worker enrollment (alias for `/api/v1/enroll`) | one-time enrollment token |
 
 ### 2. Generate an enrollment token
 
@@ -193,13 +198,42 @@ sudo gpucluster-agent enroll \
 
 The agent installs itself as a systemd unit (Linux) / Windows Service / `launchd` daemon (macOS), enrolls, fetches its mTLS cert, joins the WireGuard mesh, and starts the appropriate worker — a CUDA container on Linux/WSL2, or the native Metal worker on macOS. From now on it auto-reconnects on every boot.
 
-### 4. Use it from LM Studio
+### 4. Mint a customer API key
+
+`/v1/*` is bearer-protected — every request needs an `Authorization: Bearer mgc_…` header. Keys are minted in the admin UI under "API keys", or directly via the API:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"lm-studio-laptop","scope":"inference"}' \
+     https://cluster.example.com/api/v1/keys
+# → { "id": "...", "token": "mgc_<32 base64 chars>", "prefix": "mgc_<8>", ... }
+```
+
+The `token` is shown **only once**. The admin UI also lets you edit, revoke (soft, audit-preserving), or hard-delete keys, and keeps a `last_used_at` timestamp for each.
+
+### 5. Register a model + cluster settings (one-time)
+
+The admin UI has two new panels:
+
+- **Cluster settings** — public base URL, default model, rate limit (rpm), max tokens default. Stored in the `cluster_settings` table; `/api/v1/settings` backs the UI.
+- **Models** — the registry that feeds `/v1/models`. Add an entry per model the cluster serves; mark one as default. Phase 2 syncs `status` from live worker state.
+
+```bash
+# Register a model
+curl -X POST -H "Authorization: Bearer $ADMIN_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"id":"llama-3.1-8b-instruct","display_name":"Llama 3.1 8B Instruct","is_default":true}' \
+     https://cluster.example.com/api/v1/models
+```
+
+### 6. Use it from LM Studio
 
 Point LM Studio (or any OpenAI-compatible client) at:
 
 ```
 Base URL:  https://cluster.example.com/v1
-API key:   <your_api_key>
+API key:   mgc_<token from step 4>
 ```
 
 ---
@@ -394,6 +428,8 @@ The `crates/proto` package compiles `.proto` files via `tonic-build` at build ti
 | `MGMT_BACKEND_URL` | gateway | Upstream URL for `/api/*` (default `http://mgmt:7100`) |
 | `COORDINATOR_HTTP_URL` | gateway | Upstream URL for `/cluster/*` (default `http://coordinator:7001` — note: HTTP port, not gRPC) |
 | `OPENAI_API_URL` | gateway | Upstream URL for `/v1/*` (default `http://openai-api:7200`) |
+| `MGMT_BACKEND_URL` | openai-api | Upstream URL of mgmt-backend, used to source `/v1/models` from the live registry |
+| `COORDINATOR_HTTP_URL` | openai-api | Coordinator HTTP base (`:7001`) for `/v1/chat/completions` dispatch — **not** the gRPC port |
 
 ---
 

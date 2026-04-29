@@ -7,7 +7,7 @@ use axum::{
 };
 use std::{net::SocketAddr, sync::Arc};
 
-use crate::schema::{ChatMessage, ChatRequest, ChatResponse, Choice, ModelEntry, ModelList};
+use crate::schema::{ChatRequest, ModelEntry, ModelList};
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -90,7 +90,7 @@ async fn list_models(State(s): State<Arc<ApiState>>) -> Json<ModelList> {
 async fn chat_completions(
     State(s): State<Arc<ApiState>>,
     Json(req): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     // Phase 2 dispatcher (skeleton): ask the coordinator who can take work,
     // then return a structured response that names the chosen node. The
     // actual model invocation over llama.cpp RPC is the *next* commit; the
@@ -118,7 +118,21 @@ async fn chat_completions(
     };
 
     let nodes = resp.get("nodes").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let Some(chosen) = nodes.first().cloned() else {
+
+    // Prefer a node that already has an inference endpoint (llama-server with
+    // a model loaded). Falling back to "first eligible" lets us keep the 501
+    // message informative when no worker has a model yet.
+    let chosen = nodes
+        .iter()
+        .find(|n| {
+            n.get("inference_url")
+                .and_then(|v| v.as_str())
+                .is_some()
+        })
+        .cloned()
+        .or_else(|| nodes.first().cloned());
+
+    let Some(chosen) = chosen else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
@@ -131,33 +145,99 @@ async fn chat_completions(
         ));
     };
 
-    // For now: structured 501 that *proves* dispatch picked a real node —
-    // distinct from the previous blanket 503. The next step is to actually
-    // forward to `chosen.wg_ip:50052` over llama.cpp's RPC protocol.
-    let _ = ChatResponse {
-        id: String::new(),
-        object: "chat.completion",
-        created: 0,
-        model: String::new(),
-        choices: vec![Choice {
-            index: 0,
-            message: ChatMessage { role: "assistant".into(), content: String::new() },
-            finish_reason: "stop".into(),
-        }],
+    let Some(inference_url) = chosen
+        .get("inference_url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+    else {
+        return Err((
+            StatusCode::NOT_IMPLEMENTED,
+            Json(serde_json::json!({
+                "error": {
+                    "type": "no_inference_endpoint",
+                    "message": "a worker is online but no model is loaded — set MODEL_PATH on a worker and restart",
+                    "phase": "2-dispatcher",
+                    "request_model": req.model,
+                    "chosen_worker": chosen,
+                }
+            })),
+        ));
     };
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({
-            "error": {
-                "type": "dispatch_not_wired",
-                "message": "selected a worker but llama.cpp RPC forwarding is the next commit",
-                "phase": "2-skeleton",
-                "request_model": req.model,
-                "request_messages": req.messages.len(),
-                "chosen_worker": chosen,
-            }
-        })),
-    ))
+
+    // Forward the original chat-completion request to the chosen worker's
+    // llama-server. This is the actual work of Phase 2: the worker has the
+    // GGUF + GPU; we just relay JSON.
+    forward_chat_to_worker(&s, &inference_url, &req).await
+}
+
+async fn forward_chat_to_worker(
+    s: &ApiState,
+    inference_url: &str,
+    req: &ChatRequest,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let upstream = format!("{}/v1/chat/completions", inference_url.trim_end_matches('/'));
+    tracing::info!(
+        upstream = %upstream,
+        model = %req.model,
+        messages = req.messages.len(),
+        "forwarding chat completion to worker"
+    );
+
+    let resp = match s.http.post(&upstream).json(req).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": {
+                        "type": "worker_unreachable",
+                        "upstream": upstream,
+                        "message": e.to_string(),
+                    }
+                })),
+            ));
+        }
+    };
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err((
+            // Map upstream status to a sensible client-facing one. Any 5xx
+            // from llama-server bubbles up as 502 (the worker, not us, is
+            // broken); 4xx passes through unchanged.
+            if status.is_server_error() {
+                StatusCode::BAD_GATEWAY
+            } else {
+                StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY)
+            },
+            Json(serde_json::json!({
+                "error": {
+                    "type": "worker_returned_error",
+                    "upstream_status": status.as_u16(),
+                    "upstream_body": body,
+                }
+            })),
+        ));
+    }
+
+    // llama-server speaks the OpenAI schema natively. We pass the response
+    // through verbatim as `serde_json::Value` to preserve any extra fields
+    // (`usage`, `system_fingerprint`, …). Streaming (`text/event-stream`) is
+    // the next iteration; for now we assume the caller didn't set `stream`.
+    match resp.json::<serde_json::Value>().await {
+        Ok(parsed) => Ok(Json(parsed)),
+        Err(e) => Err((
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": {
+                    "type": "worker_response_parse_error",
+                    "message": e.to_string(),
+                }
+            })),
+        )),
+    }
 }
 
 async fn probe_cluster_size(s: &ApiState) -> usize {

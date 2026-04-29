@@ -117,12 +117,28 @@ async fn eligible_nodes(State(reg): State<Registry>) -> Json<Value> {
         })
         .map(|e| {
             let primary = e.info.gpus.first();
+            // Prefer the WireGuard IP once the mesh is up; fall back to the
+            // socket-observed public IP for dev / pre-mesh.
+            let wg_ip = e
+                .info
+                .network
+                .as_ref()
+                .map(|n| n.wg_ip.clone())
+                .filter(|s| !s.is_empty());
+            let dispatch_ip = wg_ip.clone().or(e.current_public_ip.clone());
+            // Build a fully-qualified URL for the openai-api dispatcher.
+            // `inference_endpoint` from the worker is just `:port`; we glue.
+            let inference_url = match (&dispatch_ip, &e.inference_endpoint) {
+                (Some(ip), Some(port_part)) => Some(format!("http://{ip}{port_part}")),
+                _ => None,
+            };
             json!({
-                "node_id":     e.info.node_id,
-                "device_name": e.info.os.as_ref().map(|o| o.device_name.clone()),
-                "wg_ip":       e.info.network.as_ref().map(|n| n.wg_ip.clone()),
-                "public_ip":   e.current_public_ip,
-                "rpc_port":    50052,
+                "node_id":         e.info.node_id,
+                "device_name":     e.info.os.as_ref().map(|o| o.device_name.clone()),
+                "wg_ip":           e.info.network.as_ref().map(|n| n.wg_ip.clone()),
+                "public_ip":       e.current_public_ip,
+                "rpc_port":        50052,
+                "inference_url":   inference_url,
                 "gpu": primary.map(|g| json!({
                     "name":         g.name,
                     "backend":      pb::GpuBackend::try_from(g.backend)
@@ -165,8 +181,14 @@ async fn report_node(
     let id = info.node_id.clone();
     let device = info.os.as_ref().map(|o| o.device_name.clone()).unwrap_or_default();
     let gpu_count = info.gpus.len();
-    reg.upsert(info, public_ip);
-    tracing::info!(%id, %device, gpus = gpu_count, "node inventory updated");
+    let inference_endpoint = body
+        .get("inference_endpoint")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let has_inference = inference_endpoint.is_some();
+    reg.upsert(info, public_ip, inference_endpoint);
+    tracing::info!(%id, %device, gpus = gpu_count, inference = has_inference, "node inventory updated");
     Ok(Json(json!({ "ok": true, "node_id": id })))
 }
 
