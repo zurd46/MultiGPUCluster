@@ -172,11 +172,20 @@ impl Supervisor {
         self.port
     }
 
-    /// Worker advertises just `:<port>` on the heartbeat — the coordinator
-    /// pairs it with the observed public IP. Returns `None` when no model
-    /// is currently loaded so the dispatcher correctly skips us.
+    /// Worker advertises `:<port>` (port-only) on the heartbeat by default —
+    /// the coordinator pairs it with the observed public IP. When
+    /// `INFERENCE_ADVERTISED_HOST` is set, the worker advertises
+    /// `<host>:<port>` instead; the coordinator passes that through unchanged.
+    /// This is the escape hatch for setups where the socket-observed IP is
+    /// useless (Mac dev: Docker bridge gateway → use `host.docker.internal`;
+    /// LAN dev across subnets: pin the worker's LAN IP explicitly).
     pub fn endpoint_advertise(&self) -> Option<String> {
-        self.child.as_ref().map(|_| format!(":{}", self.port))
+        self.child.as_ref().map(|_| {
+            match std::env::var("INFERENCE_ADVERTISED_HOST") {
+                Ok(host) if !host.is_empty() => format!("{host}:{}", self.port),
+                _ => format!(":{}", self.port),
+            }
+        })
     }
 }
 

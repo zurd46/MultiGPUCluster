@@ -140,10 +140,15 @@ async fn eligible_nodes(State(reg): State<Registry>) -> Json<Value> {
                 .filter(|s| !s.is_empty());
             let dispatch_ip = wg_ip.clone().or(e.current_public_ip.clone());
             // Build a fully-qualified URL for the openai-api dispatcher.
-            // `inference_endpoint` from the worker is just `:port`; we glue.
-            let inference_url = match (&dispatch_ip, &e.inference_endpoint) {
-                (Some(ip), Some(port_part)) => Some(format!("http://{ip}{port_part}")),
-                _ => None,
+            // `inference_endpoint` is either `":port"` (port-only — pair with
+            // the observed dispatch IP) or `"host:port"` (already complete,
+            // typical for `INFERENCE_ADVERTISED_HOST=host.docker.internal`).
+            let inference_url = match &e.inference_endpoint {
+                Some(ep) if ep.starts_with(':') => {
+                    dispatch_ip.as_ref().map(|ip| format!("http://{ip}{ep}"))
+                }
+                Some(ep) => Some(format!("http://{ep}")),
+                None => None,
             };
             json!({
                 "node_id":         e.info.node_id,
