@@ -12,6 +12,7 @@ path = "src/main.rs"
 gpucluster-common.workspace = true
 gpucluster-proto.workspace = true
 gpucluster-scheduler.workspace = true
+gpucluster-sysinfo.workspace = true
 
 tokio.workspace = true
 tonic.workspace = true

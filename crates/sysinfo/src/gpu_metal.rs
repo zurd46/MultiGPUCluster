@@ -9,11 +9,17 @@
 //! integrated GPUs to within a few percent.
 //!
 //! What we extract:
-//!   - chip family (M1 / M2 / M3 / M4 + Pro/Max/Ultra suffix)
+//!   - chip family (M1 / M2 / M3 / M4 / M5 + Pro/Max/Ultra suffix)
 //!   - GPU core count
 //!   - unified memory size (== system memory)
 //!   - precision support derived from family
 //!   - Metal feature-set family (Metal3 for M1/M2, Metal4 for M3+)
+//!
+//! M5 sources (verified, April 2026):
+//!   - M5 (10-core, 153 GB/s)            — Apple newsroom, 15 Oct 2025
+//!   - M5 Pro (up to 20-core, 307 GB/s)  — Apple newsroom, 3 Mar 2026
+//!   - M5 Max (up to 40-core, 614 GB/s)  — Apple newsroom, 3 Mar 2026
+//!   - M5 Ultra: NOT released as of writing — handled as generic if it appears.
 //!
 //! Output is normalised into the same `GpuInfo` shape used for NVIDIA, with
 //! `backend = METAL` and CUDA-specific fields zeroed.
@@ -66,9 +72,9 @@ pub fn detect() -> Result<Vec<pb::GpuInfo>> {
             .unwrap_or(family.default_cores());
 
         let metal_family = match family.generation {
-            1 | 2 => "Metal3",
-            3 | 4 => "Metal4",
-            _     => "Metal",
+            1 | 2     => "Metal3",
+            3 | 4 | 5 => "Metal4",  // M5 still reports Metal 4 (with new Tensor APIs)
+            _         => "Metal",
         }.to_string();
 
         let cap = pb::GpuCapabilityProfile {
@@ -82,6 +88,11 @@ pub fn detect() -> Result<Vec<pb::GpuInfo>> {
             // emulate via FP32, which we treat as "no" for scheduler purposes
             // — they fall back to FP16 anyway.
             supports_bf16:      family.generation >= 3,
+            // M5 introduces "Neural Accelerator in each GPU core" + new Metal 4
+            // Tensor APIs, but Apple has not publicly documented FP8 / FP4
+            // support as a Metal-exposed format. Stay conservative until the
+            // Metal feature-set tables confirm — we'd rather a job route to a
+            // capable NVIDIA GPU than crash mid-tensor on M5.
             supports_fp8:       false,
             supports_fp4:       false,
             supports_int8_tc:   true,
@@ -187,6 +198,9 @@ impl AppleFamily {
             (2, "")      => 10,  (2, "Pro")   => 19,  (2, "Max")   => 38,  (2, "Ultra") => 76,
             (3, "")      => 10,  (3, "Pro")   => 18,  (3, "Max")   => 40,  (3, "Ultra") => 80,
             (4, "")      => 10,  (4, "Pro")   => 20,  (4, "Max")   => 40,  (4, "Ultra") => 80,
+            // M5 family (Apple newsroom, Oct 2025 / Mar 2026). Ultra not yet
+            // released — left at Max-equivalent until Apple confirms.
+            (5, "")      => 10,  (5, "Pro")   => 20,  (5, "Max")   => 40,  (5, "Ultra") => 80,
             _            => 8,
         }
     }
@@ -199,6 +213,9 @@ impl AppleFamily {
             (2, "")      => 100.0,  (2, "Pro")   => 200.0,  (2, "Max")   => 400.0,  (2, "Ultra") => 800.0,
             (3, "")      => 100.0,  (3, "Pro")   => 150.0,  (3, "Max")   => 300.0,  (3, "Ultra") => 800.0,
             (4, "")      => 120.0,  (4, "Pro")   => 273.0,  (4, "Max")   => 546.0,  (4, "Ultra") => 1092.0,
+            // M5 family (Apple newsroom, verified). Ultra: bandwidth doubles
+            // historically (Max × 2); kept as placeholder until released.
+            (5, "")      => 153.0,  (5, "Pro")   => 307.0,  (5, "Max")   => 614.0,  (5, "Ultra") => 1228.0,
             _            => 100.0,
         }
     }

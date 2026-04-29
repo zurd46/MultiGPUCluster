@@ -1,5 +1,6 @@
 use crate::{config::WorkerConfig, identity, heartbeat, rpc_backend};
 use anyhow::Result;
+use gpucluster_sysinfo::inventory;
 
 pub async fn run(cfg: WorkerConfig) -> Result<()> {
     std::fs::create_dir_all(&cfg.data_dir).ok();
@@ -7,12 +8,15 @@ pub async fn run(cfg: WorkerConfig) -> Result<()> {
     let node_id = identity::load_or_create_node_id(&cfg.data_dir)?;
     tracing::info!(%node_id, "node identity loaded");
 
-    let info = gpucluster_sysinfo::collect()?;
-    tracing::info!(
-        gpus = info.gpus.len(),
-        os = ?info.os.as_ref().map(|o| (&o.family, &o.version)),
-        "collected sysinfo"
-    );
+    let mut info = gpucluster_sysinfo::collect()?;
+    info.node_id = node_id.clone();
+    if let Some(name) = cfg.display_name.clone() {
+        info.display_name = name;
+    }
+
+    // Full inventory to local logs — operators see exactly what the gateway is
+    // about to be told. Same string is rendered by `gpucluster-agent status`.
+    println!("{}", inventory::format_human(&info));
 
     // Launch the matching ggml RPC backend (CUDA on Linux, Metal on macOS).
     // Failure here is non-fatal: a host with no GPU still enrolls so it can
@@ -26,6 +30,6 @@ pub async fn run(cfg: WorkerConfig) -> Result<()> {
         }
     };
 
-    heartbeat::run_loop(cfg.coordinator_url.clone(), node_id).await;
+    heartbeat::run_loop(cfg.coordinator_url.clone(), info).await;
     Ok(())
 }

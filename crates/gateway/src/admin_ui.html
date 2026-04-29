@@ -342,12 +342,17 @@
       <div class="brand-sub">MultiGPUCluster — distributed GPU control plane</div>
     </div>
   </div>
-  <div class="toolbar">
+  <form class="toolbar" id="auth-form" action="#" method="post" autocomplete="on" onsubmit="return false;">
     <span class="live-indicator"><span class="live-dot"></span><span id="last-updated">live</span></span>
+    <!-- hidden username so the browser's password manager has an account label -->
+    <input type="text" name="username" value="cluster-admin" autocomplete="username"
+           style="position:absolute; opacity:0; pointer-events:none; height:0; width:0;" tabindex="-1" />
     <label for="adminKey">Admin key</label>
-    <input id="adminKey" type="password" placeholder="ADMIN_API_KEY" autocomplete="off" />
-    <button id="refresh" class="btn primary" title="Reload now (R)">↻ Refresh</button>
-  </div>
+    <input id="adminKey" name="adminKey" type="password" placeholder="ADMIN_API_KEY"
+           autocomplete="current-password" />
+    <button id="save-key" type="submit" class="btn" title="Save in browser password manager">💾 Save</button>
+    <button id="refresh" type="button" class="btn primary" title="Reload now (R)">↻ Refresh</button>
+  </form>
 </header>
 
 <main>
@@ -733,12 +738,30 @@ async function load() {
 }
 
 // ---------- wiring ----------
-const stored = localStorage.getItem(KEY_STORAGE);
-if (stored) $("adminKey").value = stored;
+// Restore key from localStorage BEFORE we do anything else, so reloads keep it.
+try {
+  const stored = localStorage.getItem(KEY_STORAGE);
+  if (stored) $("adminKey").value = stored;
+} catch (_) { /* localStorage may be blocked (private mode) — ignore */ }
+
+// Persist on every keystroke so the value survives reloads even without Enter/blur.
+$("adminKey").addEventListener("input", () => {
+  const v = $("adminKey").value;
+  try {
+    if (v) localStorage.setItem(KEY_STORAGE, v);
+    else   localStorage.removeItem(KEY_STORAGE);
+  } catch (_) { /* ignore */ }
+});
+
+// Form submit ("Save" button or Enter) → trigger browser password-manager prompt + reload.
+$("auth-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("adminKey").value;
+  try { if (v) localStorage.setItem(KEY_STORAGE, v); } catch (_) {}
+  load();
+});
 
 $("refresh").addEventListener("click", load);
-$("adminKey").addEventListener("change", load);
-$("adminKey").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
 $("filter-coord").addEventListener("input",  () => lastData && renderTables(renderKpis(lastData)));
 $("filter-mgmt").addEventListener("input",   () => lastData && renderTables(renderKpis(lastData)));
 $("filter-models").addEventListener("input", () => lastData && renderTables(renderKpis(lastData)));

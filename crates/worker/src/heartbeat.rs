@@ -1,15 +1,70 @@
+//! Periodic upload of the full node inventory to the gateway.
+//!
+//! Behaviour:
+//!   - On startup we POST the snapshot once to `/nodes/report` so the gateway
+//!     learns about the host immediately (no waiting for the first tick).
+//!   - Then every 30s we POST a refreshed snapshot (vram_free, cpu/ram, public
+//!     IP all change over time). The endpoint is upsert-by-node_id so there
+//!     is no separate "register" vs "heartbeat" call.
+//!   - Failures are logged but never fatal — the worker keeps trying. This
+//!     covers both backend maintenance windows and ISP IP flips.
+//!
+//! The gateway proxies `/cluster/*` to the coordinator's HTTP listener (see
+//! `crates/gateway/src/routes.rs::cluster_proxy`). Workers therefore hit
+//! `{coordinator_url}/nodes/report` where `coordinator_url` is either the
+//! gateway URL with `/cluster` already appended (production) or the
+//! coordinator's HTTP listener directly (dev).
+
+use gpucluster_proto::node as pb;
+use gpucluster_sysinfo::inventory;
 use std::time::Duration;
 use tokio::time::interval;
 
-pub async fn run_loop(coordinator_url: String, node_id: String) {
-    let client = reqwest::Client::new();
-    let mut tick = interval(Duration::from_secs(5));
+const HEARTBEAT_PERIOD: Duration = Duration::from_secs(30);
+
+pub async fn run_loop(coordinator_url: String, mut info: pb::NodeInfo) {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let report_url = format!("{}/nodes/report", coordinator_url.trim_end_matches('/'));
+    let node_id = info.node_id.clone();
+
+    // Initial publish — happens before the first interval tick so the
+    // gateway has the inventory within milliseconds of worker start.
+    publish(&client, &report_url, &info).await;
+
+    let mut tick = interval(HEARTBEAT_PERIOD);
+    tick.tick().await; // consume the immediate first tick
     loop {
         tick.tick().await;
-        let url = format!("{coordinator_url}/health");
-        match client.get(&url).send().await {
-            Ok(r) => tracing::debug!(node = %node_id, status = %r.status(), "heartbeat (stub)"),
-            Err(e) => tracing::warn!(error = %e, "heartbeat failed"),
+
+        // Refresh volatile fields (free VRAM, free RAM, public IP). Identity
+        // fields stay frozen — node_id, hostname, hw_fingerprint never change
+        // between reboots.
+        match gpucluster_sysinfo::collect() {
+            Ok(mut fresh) => {
+                fresh.node_id = node_id.clone();
+                fresh.display_name = info.display_name.clone();
+                info = fresh;
+            }
+            Err(e) => tracing::warn!(error = %e, "sysinfo refresh failed; reusing last snapshot"),
         }
+        publish(&client, &report_url, &info).await;
+    }
+}
+
+async fn publish(client: &reqwest::Client, url: &str, info: &pb::NodeInfo) {
+    let body = inventory::to_json(info);
+    match client.post(url).json(&body).send().await {
+        Ok(r) => {
+            if r.status().is_success() {
+                tracing::debug!(node = %info.node_id, gpus = info.gpus.len(), "inventory published");
+            } else {
+                tracing::warn!(node = %info.node_id, status = %r.status(), "inventory upload rejected");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, %url, "inventory upload failed"),
     }
 }
