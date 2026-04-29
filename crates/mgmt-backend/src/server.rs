@@ -11,7 +11,7 @@ use crate::{
     auth, ca_store,
     config::MgmtConfig,
     db,
-    handlers::{audit, enroll, enroll_token, nodes},
+    handlers::{api_keys, audit, enroll, enroll_token, nodes},
     state::AppState,
 };
 
@@ -44,6 +44,11 @@ pub async fn run(cfg: MgmtConfig) -> Result<()> {
         .route("/api/v1/nodes/{id}/revoke",        post(nodes::revoke))
         .route("/api/v1/nodes/{id}/drain",         post(nodes::drain))
         .route("/api/v1/audit",                    get(audit::list))
+        // Customer API keys for /v1/*. `verify` is admin-bearer-only too —
+        // it's a service-to-service call from the gateway, not a public route.
+        .route("/api/v1/keys",                     post(api_keys::create).get(api_keys::list))
+        .route("/api/v1/keys/{id}",                axum::routing::delete(api_keys::revoke))
+        .route("/api/v1/keys/verify",              post(api_keys::verify))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::require_admin));
 
     let app = public.merge(admin).with_state(state);
