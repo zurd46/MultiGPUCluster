@@ -70,7 +70,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-opentelemetry = "0.28"
 
 # Database
-sqlx        = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "uuid", "chrono", "json", "macros"] }
+sqlx        = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "uuid", "chrono", "json", "macros", "ipnetwork", "migrate"] }
 
 # Crypto / Auth
 rustls      = { version = "0.23", default-features = false, features = ["ring", "std"] }

@@ -91,6 +91,8 @@ services:
       POSTGRES_DB: gpucluster
       POSTGRES_USER: gpucluster
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"   # exposed to host for sqlx prepare / dev tooling
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
