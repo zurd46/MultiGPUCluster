@@ -60,11 +60,28 @@ async fn list_nodes(State(reg): State<Registry>) -> Json<Value> {
             map.insert("last_heartbeat".into(), Value::String(e.last_heartbeat.to_rfc3339()));
             map.insert("current_public_ip".into(),
                 e.current_public_ip.clone().map(Value::String).unwrap_or(Value::Null));
-            map.insert("status".into(), Value::Number(e.info.status.into()));
+            // Status as the human-readable lowercase label the dashboard expects
+            // ("online", "pending_approval", …). Raw enum number stays available
+            // under `status_code` for clients that want to switch on it.
+            map.insert("status".into(), Value::String(status_label(e.info.status).into()));
+            map.insert("status_code".into(), Value::Number(e.info.status.into()));
         }
         obj
     }).collect();
     Json(json!({ "count": nodes.len(), "nodes": nodes }))
+}
+
+fn status_label(status: i32) -> &'static str {
+    match pb::NodeStatus::try_from(status).unwrap_or(pb::NodeStatus::Unspecified) {
+        pb::NodeStatus::Unspecified      => "unspecified",
+        pb::NodeStatus::PendingApproval  => "pending_approval",
+        pb::NodeStatus::Online           => "online",
+        pb::NodeStatus::Degraded         => "degraded",
+        pb::NodeStatus::Draining         => "draining",
+        pb::NodeStatus::Offline          => "offline",
+        pb::NodeStatus::Quarantined      => "quarantined",
+        pb::NodeStatus::Revoked          => "revoked",
+    }
 }
 
 async fn report_node(
