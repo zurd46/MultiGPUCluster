@@ -1,7 +1,7 @@
 # MultiGPUCluster — Projekt-Plan
 
 Verteiltes Multi-GPU-Cluster-System für Inferenz und Fine-Tuning mit LM Studio-Kompatibilität.
-Heterogene Clients (Windows/Linux, gemischte NVIDIA-Architekturen) **an verschiedenen Standorten** werden über das Internet zu einem logischen GPU-Pool zusammengeführt und intelligent für Workloads verteilt.
+Heterogene Clients (Windows/Linux mit NVIDIA + macOS mit Apple Silicon) **an verschiedenen Standorten** werden über das Internet zu einem logischen GPU-Pool zusammengeführt und intelligent für Workloads verteilt.
 
 **Kern-Eigenschaften:**
 - Backend zentral als **System-Image** (komplette Verwaltung, Gateway, Coordinator)

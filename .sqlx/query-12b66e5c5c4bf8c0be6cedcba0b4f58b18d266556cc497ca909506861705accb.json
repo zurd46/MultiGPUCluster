@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor, action, resource, ip, details)\n         VALUES ('worker:enroll', 'NODE_ENROLLED', $1, $2, $3::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Inet",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "12b66e5c5c4bf8c0be6cedcba0b4f58b18d266556cc497ca909506861705accb"
+}

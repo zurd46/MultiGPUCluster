@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id,\n                  hostname,\n                  display_name,\n                  status,\n                  agent_version,\n                  host(current_public_ip_v4) AS current_public_ip_v4,\n                  current_country,\n                  first_seen,\n                  last_heartbeat,\n                  cert_expires_at\n           FROM nodes WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "agent_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "current_public_ip_v4",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "current_country",
+        "type_info": "Bpchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "first_seen",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_heartbeat",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "cert_expires_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      true,
+      null,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "d949476046bf0c8047b14a445428d43090b75eecc4ea1337f0d13e42c1e25aff"
+}

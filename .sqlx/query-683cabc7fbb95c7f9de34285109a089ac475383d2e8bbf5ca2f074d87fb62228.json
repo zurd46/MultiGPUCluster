@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE enroll_tokens\n            SET used_at = now(), used_by_node = $1, used_from_ip = $2\n          WHERE id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Inet",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "683cabc7fbb95c7f9de34285109a089ac475383d2e8bbf5ca2f074d87fb62228"
+}

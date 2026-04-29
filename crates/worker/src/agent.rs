@@ -1,4 +1,4 @@
-use crate::{config::WorkerConfig, identity, heartbeat};
+use crate::{config::WorkerConfig, identity, heartbeat, rpc_backend};
 use anyhow::Result;
 
 pub async fn run(cfg: WorkerConfig) -> Result<()> {
@@ -13,6 +13,18 @@ pub async fn run(cfg: WorkerConfig) -> Result<()> {
         os = ?info.os.as_ref().map(|o| (&o.family, &o.version)),
         "collected sysinfo"
     );
+
+    // Launch the matching ggml RPC backend (CUDA on Linux, Metal on macOS).
+    // Failure here is non-fatal: a host with no GPU still enrolls so it can
+    // appear in the dashboard, but stays ineligible for inference work.
+    let backend = rpc_backend::RpcBackend::from_inventory(&info.gpus);
+    let _rpc = match rpc_backend::RpcServer::spawn(backend, 50052) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            tracing::warn!(error = %e, "rpc-server-ext failed to start; node will run inference-ineligible");
+            None
+        }
+    };
 
     heartbeat::run_loop(cfg.coordinator_url.clone(), node_id).await;
     Ok(())

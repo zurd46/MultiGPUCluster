@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO nodes (id, hw_fingerprint, hostname, display_name,\n                            status, agent_version, client_cert_sha,\n                            cert_expires_at,\n                            current_public_ip_v4, public_ip_first_seen, public_ip_last_changed,\n                            first_seen)\n         VALUES ($1, $2, $3, $4, 'pending_approval', $5, $6, $7, $8, $9, $9, $9)\n         ON CONFLICT (id) DO UPDATE SET\n             hostname              = EXCLUDED.hostname,\n             display_name          = COALESCE(EXCLUDED.display_name, nodes.display_name),\n             agent_version         = EXCLUDED.agent_version,\n             client_cert_sha       = EXCLUDED.client_cert_sha,\n             cert_expires_at       = EXCLUDED.cert_expires_at,\n             current_public_ip_v4  = EXCLUDED.current_public_ip_v4,\n             public_ip_last_changed = EXCLUDED.public_ip_last_changed",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Inet",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "781d93c73471ca923e3a7e6463905f94ca849cf87fe8ef294c26d698814c1642"
+}

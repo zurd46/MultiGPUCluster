@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE nodes SET status = 'online'\n          WHERE id = $1 AND status = 'pending_approval'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d71df3cd372e5aa18cd2c8bed0e281e929d0d7e61e4e9f6d191b9cb3a3365803"
+}

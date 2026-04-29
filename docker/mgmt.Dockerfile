@@ -1,10 +1,12 @@
-FROM rust:1.85-slim AS build
+FROM rust:1.88-slim AS build
 WORKDIR /src
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config build-essential cmake protobuf-compiler ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 
+# Use the pre-generated sqlx cache so the build doesn't need a live DB.
+ENV SQLX_OFFLINE=true
 COPY . .
 RUN cargo build --release -p gpucluster-mgmt-backend
 

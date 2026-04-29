@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor, action, resource)\n         VALUES ('admin', 'NODE_APPROVED', $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e552f4b0a732cdafeebce1fcf350bd50938cd0bd8f12e87d7114c6b5afe251e8"
+}

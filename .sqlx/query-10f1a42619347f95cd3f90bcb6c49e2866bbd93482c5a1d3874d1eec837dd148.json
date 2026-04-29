@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO node_ip_history (node_id, public_ip_v4, source)\n         VALUES ($1, $2, 'tls_socket')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Inet"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "10f1a42619347f95cd3f90bcb6c49e2866bbd93482c5a1d3874d1eec837dd148"
+}
