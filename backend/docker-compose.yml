@@ -23,8 +23,11 @@ services:
       RUST_LOG: info
       GATEWAY_BIND: 0.0.0.0:8443
       MGMT_BACKEND_URL: http://mgmt:7100
-      COORDINATOR_URL: http://coordinator:7000
+      COORDINATOR_HTTP_URL: http://coordinator:7001
       OPENAI_API_URL: http://openai-api:7200
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+    ports:
+      - "8443:8443"
     expose: ["8443"]
     depends_on: [mgmt, coordinator, openai-api]
 
