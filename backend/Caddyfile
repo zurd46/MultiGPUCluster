@@ -16,27 +16,12 @@
         Permissions-Policy        "geolocation=(), microphone=(), camera=()"
     }
 
-    @cluster path /cluster/*
-    handle @cluster {
-        reverse_proxy gateway:8443
-    }
-
-    @api path /api/*
-    handle @api {
-        reverse_proxy gateway:8443
-    }
-
-    @openai path /v1/*
-    handle @openai {
-        reverse_proxy gateway:8443
-    }
-
-    @enroll path /enroll
-    handle @enroll {
-        reverse_proxy gateway:8443
-    }
-
-    handle /* {
-        reverse_proxy gateway:8443
+    # All routes proxy to the gateway; we set XFF/Host so downstream services
+    # can see the real client IP and original Host header.
+    reverse_proxy gateway:8443 {
+        header_up X-Forwarded-For   {remote_host}
+        header_up X-Real-IP         {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host  {host}
     }
 }

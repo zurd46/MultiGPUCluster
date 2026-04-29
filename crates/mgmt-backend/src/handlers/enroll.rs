@@ -6,6 +6,7 @@
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
     extract::{ConnectInfo, State},
+    http::HeaderMap,
     Json,
 };
 use chrono::{Duration, Utc};
@@ -46,11 +47,16 @@ pub struct EnrollResponse {
 pub async fn complete(
     State(s): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<EnrollRequest>,
 ) -> ApiResult<Json<EnrollResponse>> {
     if req.token.is_empty() || req.hw_fingerprint.is_empty() || req.pubkey_b64.is_empty() {
         return Err(ApiError::BadRequest("token, pubkey_b64, hw_fingerprint required".into()));
     }
+
+    // Behind a reverse proxy (Caddy → Gateway → mgmt), ConnectInfo gives us
+    // the proxy IP, not the client. Trust X-Forwarded-For when present.
+    let client_ip = client_ip(&headers).unwrap_or_else(|| addr.ip());
 
     // 1) Find a still-valid, unused enroll token whose hash matches the supplied token.
     let now = Utc::now();
@@ -89,7 +95,7 @@ pub async fn complete(
         .map_err(ApiError::internal)?;
     let cert_expires = now + Duration::days(NODE_CERT_VALID_DAYS as i64);
 
-    let public_ip: IpNetwork = match addr.ip() {
+    let public_ip: IpNetwork = match client_ip {
         std::net::IpAddr::V4(v) => format!("{v}/32").parse().unwrap(),
         std::net::IpAddr::V6(v) => format!("{v}/128").parse().unwrap(),
     };
@@ -164,7 +170,7 @@ pub async fn complete(
     tracing::info!(
         node_id = %node_id,
         hw = %req.hw_fingerprint,
-        public_ip = %addr.ip(),
+        public_ip = %client_ip,
         "node enrolled"
     );
 
@@ -175,6 +181,23 @@ pub async fn complete(
         coordinator_endpoint: s.coordinator_endpoint.clone(),
         cert_expires_at: cert_expires.to_rfc3339(),
     }))
+}
+
+/// Extract the originating client IP from X-Forwarded-For (left-most entry)
+/// when the request has been routed through a trusted reverse proxy.
+fn client_ip(headers: &HeaderMap) -> Option<std::net::IpAddr> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(str::trim)
+        .and_then(|s| s.parse().ok())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse().ok())
+        })
 }
 
 fn sha256_pem(pem: &str) -> String {

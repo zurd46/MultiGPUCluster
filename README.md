@@ -22,6 +22,7 @@ The system is designed for **mixed hardware** — NVIDIA GPUs (RTX 5060 Ti + RTX
 - **Zero-trust gateway** — TLS 1.3, mTLS for nodes, RBAC, rate limiting, immutable audit log, anomaly detection.
 - **LM Studio compatible** — exposes `/v1/chat/completions` and `/v1/models` via an OpenAI-compatible layer.
 - **Backend = system image, clients = containers or native binary** — a single `docker compose up` brings up the entire control plane; macOS workers ship as a native `.pkg`.
+- **One URL for everything** — Caddy → Gateway fans out `/api/*` (mgmt), `/cluster/*` (coordinator), `/v1/*` (openai-api), `/enroll` (worker enrollment). A built-in HTML admin page on `/` aggregates all services live; `/overview` returns the same data as JSON.
 
 ---
 
@@ -34,11 +35,18 @@ The system is designed for **mixed hardware** — NVIDIA GPUs (RTX 5060 Ti + RTX
 ┌───────────────────────────────────────────────────────────┐
 │  BACKEND (system image, docker-compose / k8s)             │
 │  ┌─────────────────────────────────────────────────────┐  │
-│  │  Caddy (TLS) → Edge Gateway (mTLS, WAF, RateLimit)  │  │
+│  │  Caddy (TLS, :443) → Edge Gateway (:8443)           │  │
+│  │  ─ /  /overview   → admin UI + JSON aggregator      │  │
+│  │  ─ /api/*         → mgmt-backend  (:7100)           │  │
+│  │  ─ /cluster/*     → coordinator HTTP (:7001)        │  │
+│  │  ─ /v1/*          → openai-api (:7200)              │  │
+│  │  ─ /enroll        → mgmt-backend enrollment         │  │
 │  └────────────────┬────────────────────────────────────┘  │
 │  ┌────────────┐ ┌─┴──────────┐ ┌──────────────┐           │
 │  │Coordinator │ │Mgmt Backend│ │OpenAI API    │           │
-│  │+ Scheduler │ │+ RBAC/Audit│ │(LM Studio)   │           │
+│  │ HTTP :7001 │ │   :7100    │ │   :7200      │           │
+│  │ gRPC :7000 │ │+ RBAC/Audit│ │(LM Studio)   │           │
+│  │+ Scheduler │ │            │ │              │           │
 │  └─────┬──────┘ └─────┬──────┘ └──────┬───────┘           │
 │  ┌─────┴───────────────┴───────────────┴─────┐            │
 │  │  PostgreSQL · Redis · MinIO · Headscale   │            │
@@ -106,17 +114,37 @@ cd MultiGPUCluster/backend
 
 cp .env.example .env
 # Fill in POSTGRES_PASSWORD, JWT_SECRET, MINIO_ROOT_PASSWORD,
-# and BACKEND_DOMAIN.
+# BACKEND_DOMAIN, and ADMIN_API_KEY (used for the admin UI / mgmt admin endpoints).
 
 docker compose up -d --build
 ```
 
-Caddy provisions a TLS cert from Let's Encrypt for `BACKEND_DOMAIN`. Once up:
+Caddy provisions a TLS cert from Let's Encrypt for `BACKEND_DOMAIN`. Once up, **everything is reachable under one URL**:
 
 ```bash
-curl https://cluster.example.com/health
-# {"status":"ok"}
+# Production (Caddy → Gateway, TLS terminated by Caddy)
+open https://cluster.example.com/        # HTML admin / Verwaltung
+curl https://cluster.example.com/health  # {"status":"ok"}
+curl https://cluster.example.com/overview  # aggregated JSON across all services
+
+# Local dev (Gateway directly, no TLS)
+open http://localhost:8443/
+curl http://localhost:8443/overview
 ```
+
+The admin page on `/` shows live service health, the coordinator's node registry, the mgmt-backend's enrolled nodes, and the OpenAI-API model list — auto-refreshes every 5 s. To see admin-protected mgmt data (`/api/v1/nodes`), paste your `ADMIN_API_KEY` into the field at the top of the page.
+
+#### Routes exposed under the one URL
+
+| Path | Upstream | Purpose |
+|---|---|---|
+| `/` | gateway | HTML admin / Verwaltung |
+| `/overview` | gateway | JSON aggregator (services + nodes + models) |
+| `/health`, `/ready` | gateway | Liveness / readiness |
+| `/api/v1/...` | mgmt-backend (`:7100`) | Users, nodes, enrollment tokens, audit |
+| `/cluster/...` | coordinator HTTP (`:7001`) | Node registry, heartbeat-derived state |
+| `/v1/...` | openai-api (`:7200`) | OpenAI-compatible chat / models |
+| `/enroll` | mgmt-backend | Worker enrollment (alias for `/api/v1/enroll`) |
 
 ### 2. Generate an enrollment token
 
@@ -152,7 +180,17 @@ gpucluster-agent enroll `
   --display-name "workstation-dani"
 ```
 
-The agent installs itself as a systemd unit / Windows Service, enrolls, fetches its mTLS cert, joins the WireGuard mesh, pulls the matching CUDA-tagged worker container, and starts. From now on it auto-reconnects on every boot.
+**macOS (Apple Silicon):**
+```bash
+# .pkg installs gpucluster-agent + gpucluster-worker + rpc-server-ext into /usr/local/bin
+curl -fsSL https://cluster.example.com/install-macos.sh | sudo bash
+sudo gpucluster-agent enroll \
+  --backend https://cluster.example.com \
+  --token   <ONE_TIME_TOKEN> \
+  --display-name "macbook-dani"
+```
+
+The agent installs itself as a systemd unit (Linux) / Windows Service / `launchd` daemon (macOS), enrolls, fetches its mTLS cert, joins the WireGuard mesh, and starts the appropriate worker — a CUDA container on Linux/WSL2, or the native Metal worker on macOS. From now on it auto-reconnects on every boot.
 
 ### 4. Use it from LM Studio
 
@@ -174,7 +212,7 @@ MultiGPUCluster/
 │   ├── common/                          Shared types, errors, IDs
 │   ├── sysinfo/                         NVML + OS detection (Win/Linux)
 │   ├── ca/                              Internal certificate authority
-│   ├── gateway/                         Edge gateway (mTLS, WAF, audit)
+│   ├── gateway/                         One-URL fan-out + admin UI + mTLS/WAF/audit
 │   ├── coordinator/                     Cluster master + scheduler glue
 │   ├── scheduler/                       Placement algorithms, compute groups
 │   ├── mgmt-backend/                    Users, RBAC, audit, enrollment
@@ -186,7 +224,7 @@ MultiGPUCluster/
 ├── cpp/
 │   ├── llama-rpc-ext/                   llama.cpp fork with cluster hooks
 │   └── cuda-kernels/                    Custom kernels (fine-tuning)
-├── dashboard/                           Web UI (Phase 5)
+├── dashboard/                           Standalone web UI (Phase 5 — minimal admin already shipped inside gateway)
 ├── backend/
 │   ├── docker-compose.yml               Backend stack
 │   ├── Caddyfile                        Reverse proxy + TLS
@@ -204,8 +242,10 @@ MultiGPUCluster/
 | Layer | Choice |
 |---|---|
 | Control plane | Rust (tokio, tonic, axum, sqlx) |
-| Compute | C++ / CUDA, NCCL, llama.cpp fork |
-| Fine-tuning | candle (Rust) — PyTorch via pyo3 as fallback |
+| Compute (NVIDIA) | C++ / CUDA, NCCL, llama.cpp fork (ggml-cuda) |
+| Compute (Apple Silicon) | C++ / Metal, llama.cpp fork (ggml-metal), unified memory |
+| Fine-tuning | candle (Rust) — PyTorch via pyo3 as fallback (NVIDIA only today) |
+| Worker packaging | Docker image (Linux/WSL2) · native `.pkg` + `launchd` (macOS) |
 | Database | PostgreSQL 16 |
 | Cache / queue | Redis 7 |
 | Object storage | MinIO (S3-compatible) |
@@ -214,7 +254,7 @@ MultiGPUCluster/
 | Observability | OpenTelemetry, Prometheus, Grafana |
 
 **Why Rust:** Memory safety and no GC pauses for the scheduler / gateway hot path.
-**Why C++:** CUDA kernels, NCCL, and llama.cpp are natively C++.
+**Why C++:** CUDA kernels, NCCL, Metal shaders, and llama.cpp are natively C++.
 
 ---
 
@@ -222,8 +262,8 @@ MultiGPUCluster/
 
 | Phase | Focus | Status |
 |---|---|---|
-| 0 | Foundation: workspace, Dockerfiles, bootstrapper skeleton | scaffolded |
-| 1 | Identity & cluster fundamentals: enrollment, mTLS, registry, WAN-IP tracking | planned |
+| 0 | Foundation: workspace, Dockerfiles, bootstrapper skeleton, **gateway reverse-proxy + built-in admin UI on a single URL** | done |
+| 1 | Identity & cluster fundamentals: enrollment, mTLS, registry, WAN-IP tracking | in progress |
 | 2 | Distributed inference over WAN: llama.cpp RPC fork, layer-allocation solver, OpenAI API | planned |
 | 3 | Smart scheduling & observability: priority queues, NCCL bench, Prometheus | planned |
 | 4 | Fine-tuning: LoRA / QLoRA / FSDP, dataset registry with privacy tags | planned |
@@ -237,18 +277,19 @@ Detailed milestones live in [`docs/PLAN.md`](docs/PLAN.md).
 
 Mixed architectures are a **first-class** scenario, not an edge case. The scheduler:
 
-1. Builds a capability profile per GPU at join time (architecture, FP8/FP4 support, measured TFLOPs).
-2. Partitions the cluster into homogeneous **compute groups** for tensor parallelism.
-3. Runs **pipeline parallelism** across groups, with VRAM- and benchmark-score-weighted layer allocation.
+1. Builds a capability profile per GPU at join time (architecture, backend, FP8/FP4 support, measured TFLOPs).
+2. Partitions the cluster into homogeneous **compute groups** for tensor parallelism — bucket key is `cuda-{arch}-{cc.major}.{cc.minor}` for NVIDIA, `metal-{family}` for Apple (e.g. `metal-Apple-M3-Max`). NVIDIA and Apple GPUs are never lumped into the same TP group.
+3. Runs **pipeline parallelism** across groups, with VRAM- and benchmark-score-weighted layer allocation. Mixed CUDA/Metal pipelines are allowed at PP boundaries because both backends agree on BF16 on the wire.
 4. Detects latency islands by RTT measurement — TP only inside an island, PP across the WAN.
-5. Picks cluster-wide precision as the greatest common denominator (BF16 default, FP8 when all selected GPUs support it).
+5. Picks cluster-wide precision as the greatest common denominator (BF16 default, FP8 when all selected GPUs support it). Apple GPUs older than M3 (no native BF16) and any Apple GPU when FP8/FP4 is required are filtered out automatically.
 
-**Example:** A 70B model split across `2× RTX 4090 + 1× RTX 5060 Ti + 1× RTX 3090`:
+**Example:** A 70B model split across `2× RTX 4090 + 1× RTX 5060 Ti + 1× RTX 3090 + 1× M3 Max`:
 ```
-Stage 0:  RTX 5060 Ti  →  ~12 layers
-Stage 1:  RTX 4090 #1  →  ~26 layers
-Stage 2:  RTX 4090 #2  →  ~26 layers
-Stage 3:  RTX 3090     →  ~16 layers
+Stage 0:  RTX 5060 Ti  →  ~10 layers (cuda-Blackwell-12.0)
+Stage 1:  RTX 4090 #1  →  ~22 layers (cuda-Ada-8.9)
+Stage 2:  RTX 4090 #2  →  ~22 layers (cuda-Ada-8.9)
+Stage 3:  RTX 3090     →  ~14 layers (cuda-Ampere-8.6)
+Stage 4:  M3 Max 64GB  →  ~12 layers (metal-Apple-M3-Max)
 ```
 
 ---
@@ -286,11 +327,72 @@ cargo run -p gpucluster-gateway
 cargo run -p gpucluster-coordinator
 cargo run -p gpucluster-mgmt-backend
 
-# Worker (requires NVIDIA driver + CUDA)
+# Worker — auto-detects backend from the host:
+#   Linux/Windows + NVIDIA driver  → CUDA RPC backend
+#   macOS on Apple Silicon         → Metal RPC backend
+#   anything else                  → enrolls but stays inference-ineligible
 cargo run -p gpucluster-worker
 ```
 
+For the C++ RPC server pick the matching backend explicitly:
+
+```bash
+# NVIDIA host
+cmake -S cpp/llama-rpc-ext -B cpp/llama-rpc-ext/build \
+  -DBUILD_RPC_SERVER=ON -DBUILD_BACKEND_CUDA=ON
+cmake --build cpp/llama-rpc-ext/build -j
+
+# Apple Silicon host (default on macOS)
+cmake -S cpp/llama-rpc-ext -B cpp/llama-rpc-ext/build \
+  -DBUILD_RPC_SERVER=ON -DBUILD_BACKEND_METAL=ON
+cmake --build cpp/llama-rpc-ext/build -j
+```
+
+### Bring up the full backend stack locally
+
+Two options — pick whichever is convenient:
+
+**A) Docker Compose (recommended — also brings up Postgres / Redis / MinIO / Caddy):**
+
+```bash
+cd backend
+docker compose up -d --build
+open http://localhost:8443/        # admin / Verwaltung (gateway direct)
+open http://localhost/             # via Caddy (uses BACKEND_DOMAIN, default localhost)
+```
+
+**B) Native dev (no Docker — needs Postgres running on :5432):**
+
+```bash
+./scripts/dev-up.sh
+# health checks printed at the end. Stop with: ./scripts/dev-down.sh
+```
+
+Local default ports:
+
+| Service | Port |
+|---|---|
+| gateway (HTTP, admin UI, all routes) | `8443` |
+| coordinator HTTP | `7001` |
+| coordinator gRPC | `7000` |
+| mgmt-backend | `7100` |
+| openai-api | `7200` |
+
 The `crates/proto` package compiles `.proto` files via `tonic-build` at build time. Make sure `protoc` is installed locally (`apt install protobuf-compiler` / `brew install protobuf`).
+
+### Environment variables (backend)
+
+| Var | Used by | Purpose |
+|---|---|---|
+| `BACKEND_DOMAIN` | caddy | Public domain for TLS / routing (default `localhost` for dev) |
+| `POSTGRES_PASSWORD` | postgres, mgmt | DB password |
+| `JWT_SECRET` | mgmt | JWT signing key |
+| `ADMIN_API_KEY` | mgmt, gateway admin UI | Bearer token for `/api/v1/...` admin endpoints |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | minio | Object storage credentials |
+| `GATEWAY_BIND` | gateway | Gateway bind address (default `0.0.0.0:8443`) |
+| `MGMT_BACKEND_URL` | gateway | Upstream URL for `/api/*` (default `http://mgmt:7100`) |
+| `COORDINATOR_HTTP_URL` | gateway | Upstream URL for `/cluster/*` (default `http://coordinator:7001` — note: HTTP port, not gRPC) |
+| `OPENAI_API_URL` | gateway | Upstream URL for `/v1/*` (default `http://openai-api:7200`) |
 
 ---
 
