@@ -501,9 +501,9 @@
     <div style="overflow-x: auto;">
       <table id="tbl-mgmt">
         <thead><tr>
-          <th>Node ID</th><th>Display name</th><th>Status</th><th>Created</th>
+          <th>Node ID</th><th>Display name</th><th>Status</th><th>First seen</th><th>Actions</th>
         </tr></thead>
-        <tbody><tr><td colspan="4" class="empty">enter admin key above…</td></tr></tbody>
+        <tbody><tr><td colspan="5" class="empty">enter admin key above…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -628,12 +628,34 @@ function escapeHtml(v) {
   }[c]));
 }
 
-function showToast(msg) {
+function showToast(msg, ok = false) {
   const t = $("toast");
   t.textContent = msg;
+  t.classList.toggle("ok", !!ok);
   t.classList.add("show");
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove("show"), 4000);
+}
+
+// ---------- mgmt API helper ----------
+function adminKey() { return ($("adminKey").value || "").trim(); }
+function adminHeaders(extra = {}) {
+  const k = adminKey();
+  const h = { ...extra };
+  if (k) h["Authorization"] = "Bearer " + k;
+  return h;
+}
+async function mgmtCall(method, path, body) {
+  const opts = { method, headers: adminHeaders({ "Content-Type": "application/json" }) };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  let data = null;
+  try { data = await r.json(); } catch (_) { /* may be empty */ }
+  if (!r.ok) {
+    const err = (data && (data.error || data.message)) || ("HTTP " + r.status);
+    throw new Error(err);
+  }
+  return data;
 }
 
 // ---------- KPI rendering ----------
@@ -794,13 +816,14 @@ function renderTables({ liveNodes, mgmtNodes, models, isAuthErr }) {
 
   if (isAuthErr) {
     $("tbl-mgmt").querySelector("tbody").innerHTML =
-      '<tr><td colspan="4" class="empty">unauthorized — paste your <code>ADMIN_API_KEY</code> in the field above</td></tr>';
+      '<tr><td colspan="5" class="empty">unauthorized — paste your <code>ADMIN_API_KEY</code> in the field above</td></tr>';
   } else {
     fillTable("tbl-mgmt", mgmtNodes, [
       { key: "id", cls: "id" },
       { key: "display_name", render: (v) => escapeHtml(v || "—") },
       { key: "status", render: (v) => pillFor(v) },
-      { key: "created_at", cls: "muted", render: (v) => escapeHtml(v || "—") },
+      { key: "first_seen", cls: "muted", render: (v) => escapeHtml(v ? relTime(v) : "—") },
+      { key: "id", render: (id, row) => nodeActionsHtml(id, row) },
     ], "filter-mgmt", "no nodes registered");
   }
 
@@ -809,6 +832,160 @@ function renderTables({ liveNodes, mgmtNodes, models, isAuthErr }) {
     { key: "owned_by", render: (v) => escapeHtml(v || "—") },
     { key: "object", cls: "muted" },
   ], "filter-models", "no models available");
+}
+
+// ---------- node action buttons ----------
+function nodeActionsHtml(id, row) {
+  const status = (row.status || "").toLowerCase();
+  const can = (s) => status === s || (Array.isArray(s) && s.includes(status));
+  const safeId = escapeHtml(id);
+  const btn = (action, label, cls = "") =>
+    `<button class="key-action ${cls}" data-action="${action}" data-id="${safeId}">${label}</button>`;
+  const parts = [];
+  if (status === "pending_approval") parts.push(btn("approve", "✓ Approve", "approve"));
+  if (can(["online", "degraded"]))   parts.push(btn("drain",   "⏸ Drain"));
+  if (status !== "revoked")          parts.push(btn("revoke",  "✕ Revoke"));
+  return `<div style="display:flex; gap:6px; flex-wrap:wrap;">${parts.join("")}</div>`;
+}
+
+async function handleNodeAction(action, id) {
+  const ok = action !== "approve" ? confirm(`${action.toUpperCase()} node ${id}?`) : true;
+  if (!ok) return;
+  try {
+    await mgmtCall("POST", `/api/v1/nodes/${encodeURIComponent(id)}/${action}`);
+    showToast(`Node ${action}d`, true);
+    load();
+  } catch (e) {
+    showToast(`${action} failed: ${e.message}`);
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-action]");
+  if (!btn || !btn.dataset.id) return;
+  const a = btn.dataset.action;
+  if (["approve", "revoke", "drain"].includes(a)) {
+    handleNodeAction(a, btn.dataset.id);
+  } else if (a === "key-revoke" || a === "key-delete" || a === "key-edit") {
+    handleKeyAction(a, btn.dataset.id, btn.dataset.name, btn.dataset.scope);
+  }
+});
+
+// ---------- API keys CRUD ----------
+function keyActionsHtml(row) {
+  const safeId = escapeHtml(row.id);
+  const safeName = escapeHtml(row.name || "");
+  const safeScope = escapeHtml(row.scope || "");
+  const revoked = !!row.revoked_at;
+  const editBtn = `<button class="key-action" data-action="key-edit"
+                   data-id="${safeId}" data-name="${safeName}" data-scope="${safeScope}">Edit</button>`;
+  const revokeBtn = revoked
+    ? `<button class="key-action" disabled>Revoked</button>`
+    : `<button class="key-action" data-action="key-revoke" data-id="${safeId}">Revoke</button>`;
+  const deleteBtn = `<button class="key-action" data-action="key-delete" data-id="${safeId}">Delete</button>`;
+  return `<div style="display:flex; gap:6px; flex-wrap:wrap;">${editBtn}${revokeBtn}${deleteBtn}</div>`;
+}
+
+function keyStatusPill(row) {
+  if (row.revoked_at) return '<span class="pill err">revoked</span>';
+  if (row.expires_at && new Date(row.expires_at) < new Date())
+    return '<span class="pill warn">expired</span>';
+  return '<span class="pill ok">active</span>';
+}
+
+async function loadKeys() {
+  if (!adminKey()) {
+    $("tbl-keys").querySelector("tbody").innerHTML =
+      '<tr><td colspan="7" class="empty">enter admin key above…</td></tr>';
+    $("keys-count").textContent = "—";
+    return;
+  }
+  try {
+    const rows = await mgmtCall("GET", "/api/v1/keys");
+    const filter = ($("filter-keys").value || "").toLowerCase().trim();
+    const filtered = filter
+      ? rows.filter((r) => ["name", "prefix", "scope"].some((k) =>
+          String(r[k] ?? "").toLowerCase().includes(filter)))
+      : rows;
+    $("keys-count").textContent = rows.length;
+    const tbody = $("tbl-keys").querySelector("tbody");
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="empty">${rows.length === 0
+        ? "no API keys yet — create one above"
+        : "no matches"}</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = filtered.map((r) => `
+      <tr>
+        <td>${escapeHtml(r.name || "—")}</td>
+        <td class="muted">${escapeHtml(r.prefix || "")}…</td>
+        <td>${pillFor(r.scope)}</td>
+        <td class="muted">${escapeHtml(relTime(r.created_at))}</td>
+        <td class="muted">${escapeHtml(r.last_used_at ? relTime(r.last_used_at) : "never")}</td>
+        <td>${keyStatusPill(r)}</td>
+        <td>${keyActionsHtml(r)}</td>
+      </tr>`).join("");
+  } catch (e) {
+    $("tbl-keys").querySelector("tbody").innerHTML =
+      `<tr><td colspan="7" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    $("keys-count").textContent = "err";
+  }
+}
+
+async function createKey() {
+  const name = $("key-name").value.trim();
+  const scope = $("key-scope").value;
+  const ttlDays = parseInt($("key-ttl").value, 10);
+  if (!name) { showToast("name is required"); return; }
+  try {
+    const body = { name, scope };
+    if (Number.isFinite(ttlDays) && ttlDays > 0) body.ttl_secs = ttlDays * 86400;
+    const res = await mgmtCall("POST", "/api/v1/keys", body);
+    $("new-key-token").textContent = res.token;
+    $("new-key").classList.add("show");
+    $("key-name").value = "";
+    $("key-ttl").value = "";
+    showToast("key created — copy it now", true);
+    loadKeys();
+  } catch (e) {
+    showToast("create failed: " + e.message);
+  }
+}
+
+async function handleKeyAction(action, id, name, scope) {
+  if (action === "key-revoke") {
+    if (!confirm(`Revoke key ${id}? It can no longer authenticate /v1/* but stays in the audit log.`)) return;
+    try {
+      await mgmtCall("POST", `/api/v1/keys/${encodeURIComponent(id)}/revoke`);
+      showToast("key revoked", true);
+      loadKeys();
+    } catch (e) { showToast("revoke failed: " + e.message); }
+    return;
+  }
+  if (action === "key-delete") {
+    if (!confirm(`Permanently DELETE key ${id}? This removes it entirely (no audit row left).`)) return;
+    try {
+      await mgmtCall("DELETE", `/api/v1/keys/${encodeURIComponent(id)}?purge=true`);
+      showToast("key deleted", true);
+      loadKeys();
+    } catch (e) { showToast("delete failed: " + e.message); }
+    return;
+  }
+  if (action === "key-edit") {
+    const newName = prompt("New name (leave blank to keep current):", name || "") ?? null;
+    if (newName === null) return;
+    const newScope = prompt("New scope ('inference' or 'admin', blank to keep):", scope || "") ?? null;
+    if (newScope === null) return;
+    const body = {};
+    if (newName.trim() && newName.trim() !== name) body.name = newName.trim();
+    if (newScope.trim() && newScope.trim() !== scope) body.scope = newScope.trim();
+    if (Object.keys(body).length === 0) return;
+    try {
+      await mgmtCall("PATCH", `/api/v1/keys/${encodeURIComponent(id)}`, body);
+      showToast("key updated", true);
+      loadKeys();
+    } catch (e) { showToast("update failed: " + e.message); }
+  }
 }
 
 // ---------- main load ----------
@@ -867,10 +1044,23 @@ $("auth-form").addEventListener("submit", (e) => {
   load();
 });
 
-$("refresh").addEventListener("click", load);
+$("refresh").addEventListener("click", () => { load(); loadKeys(); });
 $("filter-coord").addEventListener("input",  () => lastData && renderTables(renderKpis(lastData)));
 $("filter-mgmt").addEventListener("input",   () => lastData && renderTables(renderKpis(lastData)));
 $("filter-models").addEventListener("input", () => lastData && renderTables(renderKpis(lastData)));
+$("filter-keys").addEventListener("input",   loadKeys);
+
+// API keys
+$("key-form").addEventListener("submit", (e) => { e.preventDefault(); createKey(); });
+$("new-key-copy").addEventListener("click", () => {
+  navigator.clipboard.writeText($("new-key-token").textContent || "")
+    .then(() => showToast("copied", true))
+    .catch(() => showToast("copy failed — select manually"));
+});
+$("new-key-dismiss").addEventListener("click", () => {
+  $("new-key").classList.remove("show");
+  $("new-key-token").textContent = "";
+});
 
 // keyboard: R to refresh, focus visible
 document.addEventListener("keydown", (e) => {
@@ -880,7 +1070,8 @@ document.addEventListener("keydown", (e) => {
 });
 
 load();
-setInterval(load, REFRESH_MS);
+loadKeys();
+setInterval(() => { load(); loadKeys(); }, REFRESH_MS);
 </script>
 
 </body>
