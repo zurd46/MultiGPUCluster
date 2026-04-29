@@ -42,6 +42,11 @@ services:
       DATABASE_URL: postgres://gpucluster:${POSTGRES_PASSWORD}@postgres:5432/gpucluster
       COORD_GRPC_BIND: 0.0.0.0:7000
       COORD_HTTP_BIND: 0.0.0.0:7001
+    # Expose coordinator's HTTP port to localhost for dev workers that don't
+    # want to wrestle with the gateway's self-signed TLS cert. Production
+    # workers always go through the gateway over WireGuard.
+    ports:
+      - "127.0.0.1:7001:7001"
     expose: ["7000", "7001"]
     depends_on: [postgres]
 

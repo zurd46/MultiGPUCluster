@@ -547,6 +547,10 @@
         <label for="set-max-tokens">Max tokens default</label>
         <input id="set-max-tokens" type="number" min="1" placeholder="4096" />
       </div>
+      <div style="grid-column: 1 / -1;">
+        <label for="set-hf-token">HuggingFace API token <span style="color: var(--muted); font-weight: normal;">(optional — needed only for gated/private repos)</span></label>
+        <input id="set-hf-token" type="password" autocomplete="off" placeholder="hf_••••••••••••" />
+      </div>
     </div>
     <div style="padding: 0 18px 16px; display: flex; gap: 10px; align-items: center;">
       <button id="settings-save" class="btn primary">💾 Save settings</button>
@@ -592,13 +596,24 @@
         </select>
       </div>
       <button id="model-create" type="submit" class="btn primary" style="align-self:end;">+ Add model</button>
+      <div style="grid-column: 1 / -1; padding-top: 4px; color: var(--muted); font-size: 11px;">
+        Hugging Face source <span style="font-family: var(--mono);">(optional — fill these to enable the “Load” action below)</span>
+      </div>
+      <div style="grid-column: 1 / 3;">
+        <label for="model-hf-repo">HF repo</label>
+        <input id="model-hf-repo" type="text" placeholder="bartowski/Llama-3.2-1B-Instruct-GGUF" />
+      </div>
+      <div style="grid-column: 3 / 5;">
+        <label for="model-hf-file">HF file</label>
+        <input id="model-hf-file" type="text" placeholder="Llama-3.2-1B-Instruct-Q4_K_M.gguf" />
+      </div>
     </form>
     <div style="overflow-x: auto;">
       <table id="tbl-models-reg">
         <thead><tr>
-          <th>ID</th><th>Display name</th><th>Status</th><th>Default</th><th>Created</th><th></th>
+          <th>ID</th><th>Display name</th><th>HF source</th><th>Status</th><th>Default</th><th>Loaded on</th><th>Created</th><th></th>
         </tr></thead>
-        <tbody><tr><td colspan="6" class="empty">enter admin key above…</td></tr></tbody>
+        <tbody><tr><td colspan="8" class="empty">enter admin key above…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -949,7 +964,7 @@ document.addEventListener("click", (e) => {
     handleNodeAction(a, btn.dataset.id);
   } else if (a === "key-revoke" || a === "key-delete" || a === "key-edit") {
     handleKeyAction(a, btn.dataset.id, btn.dataset.name, btn.dataset.scope);
-  } else if (a === "model-delete" || a === "model-toggle" || a === "model-default") {
+  } else if (a === "model-delete" || a === "model-toggle" || a === "model-default" || a === "model-load") {
     handleModelAction(a, btn.dataset.id, btn.dataset.status);
   }
 });
@@ -1090,6 +1105,14 @@ async function loadSettings() {
     $("set-default-model").value = v("default_model", "auto");
     $("set-rate-limit").value    = v("rate_limit_rpm", "60");
     $("set-max-tokens").value    = v("max_tokens_default", "4096");
+    // Don't paint the actual token back into the field — we don't want it
+    // sitting in the DOM if someone screenshots the page. Just hint that
+    // a token is set, with placeholder dots.
+    const hfTokenSet = !!v("huggingface_api_token").trim();
+    $("set-hf-token").value = "";
+    $("set-hf-token").placeholder = hfTokenSet
+      ? "•••••• (set — leave blank to keep, type to replace)"
+      : "hf_•••••••••••• (paste to enable)";
 
     // Auto-persist on first load: if the admin never saved a public_base_url,
     // capture whatever the gateway derived from the live request and write it
@@ -1121,9 +1144,16 @@ async function saveSettings() {
     rate_limit_rpm:     parseInt($("set-rate-limit").value, 10) || 60,
     max_tokens_default: parseInt($("set-max-tokens").value, 10) || 4096,
   };
+  // HF token only goes on the wire when the admin actually typed something.
+  // Empty input = "keep the existing value" (we don't echo it back into the
+  // form, so we can't tell apart "keep" from "clear"; require an explicit
+  // "Clear HF token" gesture if/when that becomes necessary).
+  const hfToken = $("set-hf-token").value;
+  if (hfToken.length > 0) body.huggingface_api_token = hfToken;
   try {
     await mgmtCall("PUT", "/api/v1/settings", body);
     showToast("settings saved", true);
+    $("set-hf-token").value = "";
     loadSettings();
   } catch (e) {
     showToast("save failed: " + e.message);
@@ -1143,7 +1173,7 @@ function renderEndpointSnippet(baseUrl) {
 async function loadModels() {
   if (!adminKey()) {
     $("tbl-models-reg").querySelector("tbody").innerHTML =
-      '<tr><td colspan="6" class="empty">enter admin key above…</td></tr>';
+      '<tr><td colspan="8" class="empty">enter admin key above…</td></tr>';
     $("models-reg-count").textContent = "—";
     return;
   }
@@ -1151,26 +1181,37 @@ async function loadModels() {
     const rows = await mgmtCall("GET", "/api/v1/models");
     const filter = ($("filter-models-reg").value || "").toLowerCase().trim();
     const filtered = filter
-      ? rows.filter((r) => ["id", "display_name", "status"].some((k) =>
+      ? rows.filter((r) => ["id", "display_name", "status", "hf_repo"].some((k) =>
           String(r[k] ?? "").toLowerCase().includes(filter)))
       : rows;
     $("models-reg-count").textContent = rows.length;
     const tbody = $("tbl-models-reg").querySelector("tbody");
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="empty">${rows.length === 0
+      tbody.innerHTML = `<tr><td colspan="8" class="empty">${rows.length === 0
         ? "no models registered yet"
         : "no matches"}</td></tr>`;
       return;
     }
-    tbody.innerHTML = filtered.map((r) => `
+    tbody.innerHTML = filtered.map((r) => {
+      const hasHf = (r.hf_repo || "").length > 0 && (r.hf_file || "").length > 0;
+      const hfCell = hasHf
+        ? `<span class="muted" style="font-family: var(--mono); font-size: 11px;">${escapeHtml(r.hf_repo)}<br>${escapeHtml(r.hf_file)}</span>`
+        : `<span class="pill muted">manual</span>`;
+      const loadBtn = hasHf
+        ? `<button class="key-action" data-action="model-load" data-id="${escapeHtml(r.id)}">Load…</button>`
+        : "";
+      return `
       <tr>
         <td class="id">${escapeHtml(r.id)}</td>
         <td>${escapeHtml(r.display_name || "—")}</td>
+        <td>${hfCell}</td>
         <td>${pillFor(r.status)}</td>
         <td>${r.is_default ? '<span class="pill ok">default</span>' : '<span class="pill muted">—</span>'}</td>
+        <td class="muted" style="font-family: var(--mono); font-size: 11px;">${escapeHtml(r.loaded_on_node || "—")}</td>
         <td class="muted">${escapeHtml(relTime(r.created_at))}</td>
         <td>
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            ${loadBtn}
             <button class="key-action" data-action="model-toggle"
                     data-id="${escapeHtml(r.id)}" data-status="${escapeHtml(r.status)}">
               ${r.status === "disabled" ? "Enable" : "Disable"}
@@ -1179,26 +1220,36 @@ async function loadModels() {
             <button class="key-action" data-action="model-delete" data-id="${escapeHtml(r.id)}">Delete</button>
           </div>
         </td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
   } catch (e) {
     $("tbl-models-reg").querySelector("tbody").innerHTML =
-      `<tr><td colspan="6" class="empty">${escapeHtml(e.message)}</td></tr>`;
+      `<tr><td colspan="8" class="empty">${escapeHtml(e.message)}</td></tr>`;
     $("models-reg-count").textContent = "err";
   }
 }
 async function createModel() {
   const id = $("model-id").value.trim();
   if (!id) { showToast("Model ID is required"); return; }
+  const hfRepo = $("model-hf-repo").value.trim();
+  const hfFile = $("model-hf-file").value.trim();
+  if ((hfRepo && !hfFile) || (!hfRepo && hfFile)) {
+    showToast("HF repo and HF file must be set together");
+    return;
+  }
   const body = {
     id,
     display_name: $("model-name").value.trim(),
     status:       $("model-status").value,
     is_default:   $("model-default").value === "true",
+    hf_repo:      hfRepo,
+    hf_file:      hfFile,
   };
   try {
     await mgmtCall("POST", "/api/v1/models", body);
     showToast("model added", true);
     $("model-id").value = ""; $("model-name").value = "";
+    $("model-hf-repo").value = ""; $("model-hf-file").value = "";
     loadModels();
   } catch (e) {
     showToast("add failed: " + e.message);
@@ -1220,6 +1271,42 @@ async function handleModelAction(action, id, status) {
   if (action === "model-default") {
     try { await mgmtCall("PATCH", `/api/v1/models/${encodeURIComponent(id)}`, { is_default: true }); showToast("default set", true); loadModels(); }
     catch (e) { showToast("update failed: " + e.message); }
+    return;
+  }
+  if (action === "model-load") {
+    // Pick a node. We default to whatever's already eligible (live + has a
+    // GPU + has a control endpoint); if there's only one, skip the prompt.
+    let candidates = [];
+    try {
+      const overview = lastData;
+      const cn = overview && overview.coordinator && overview.coordinator.nodes;
+      if (Array.isArray(cn)) {
+        candidates = cn
+          .filter((n) => n.control_endpoint)
+          .map((n) => n.node_id || n.id);
+      }
+    } catch (_) { /* fall through to manual entry */ }
+    let nodeId;
+    if (candidates.length === 1) {
+      if (!confirm(`Load ${id} on node ${candidates[0]}?\n\nWorker will download from HF and restart llama-server.`)) return;
+      nodeId = candidates[0];
+    } else {
+      const hint = candidates.length > 0
+        ? `Available nodes:\n  - ${candidates.join("\n  - ")}\n\nPaste one:`
+        : `No live worker exposes /control yet. Paste a node id to try anyway:`;
+      nodeId = prompt(`Load ${id} — which worker should download it?\n\n${hint}`,
+        candidates[0] || "");
+      if (!nodeId) return;
+      nodeId = nodeId.trim();
+    }
+    try {
+      const r = await mgmtCall("POST",
+        `/api/v1/models/${encodeURIComponent(id)}/load?node_id=${encodeURIComponent(nodeId)}`);
+      showToast(`download dispatched to ${nodeId}`, true);
+      loadModels();
+    } catch (e) {
+      showToast("load failed: " + e.message);
+    }
   }
 }
 

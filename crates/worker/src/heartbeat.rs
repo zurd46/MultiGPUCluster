@@ -14,7 +14,14 @@
 //! `{coordinator_url}/nodes/report` where `coordinator_url` is either the
 //! gateway URL with `/cluster` already appended (production) or the
 //! coordinator's HTTP listener directly (dev).
+//!
+//! In addition to inventory we now ship two fields the coordinator wires up
+//! into its registry:
+//!   - `inference_endpoint`: `:port` of the llama-server, when one is loaded.
+//!   - `control_endpoint`:   `:port` of the worker's control plane (always).
+//!   - `current_model`:      logical id of the loaded model, when any.
 
+use crate::inference_server::SharedSupervisor;
 use gpucluster_proto::node as pb;
 use gpucluster_sysinfo::inventory;
 use std::time::Duration;
@@ -25,7 +32,8 @@ const HEARTBEAT_PERIOD: Duration = Duration::from_secs(30);
 pub async fn run_loop(
     coordinator_url: String,
     mut info: pb::NodeInfo,
-    inference_endpoint: Option<String>,
+    sup: SharedSupervisor,
+    control_endpoint: String,
 ) {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -37,7 +45,7 @@ pub async fn run_loop(
 
     // Initial publish — happens before the first interval tick so the
     // gateway has the inventory within milliseconds of worker start.
-    publish(&client, &report_url, &info, inference_endpoint.as_deref()).await;
+    publish(&client, &report_url, &info, &sup, &control_endpoint).await;
 
     let mut tick = interval(HEARTBEAT_PERIOD);
     tick.tick().await; // consume the immediate first tick
@@ -55,7 +63,7 @@ pub async fn run_loop(
             }
             Err(e) => tracing::warn!(error = %e, "sysinfo refresh failed; reusing last snapshot"),
         }
-        publish(&client, &report_url, &info, inference_endpoint.as_deref()).await;
+        publish(&client, &report_url, &info, &sup, &control_endpoint).await;
     }
 }
 
@@ -63,21 +71,50 @@ async fn publish(
     client: &reqwest::Client,
     url: &str,
     info: &pb::NodeInfo,
-    inference_endpoint: Option<&str>,
+    sup: &SharedSupervisor,
+    control_endpoint: &str,
 ) {
+    // Snapshot the supervisor state under the lock, then drop it before the
+    // (potentially slow) HTTP call so a stuck network doesn't stall the
+    // control server.
+    let (inference_endpoint, current_model) = {
+        let guard = sup.lock().await;
+        (guard.endpoint_advertise(), guard.model_id.clone())
+    };
+
     let mut body = inventory::to_json(info);
-    if let (Some(ep), serde_json::Value::Object(map)) = (inference_endpoint, &mut body) {
-        // Worker reports `:50053` (port-only); coordinator pairs it with the
-        // observed public/wg IP to build a fully-qualified URL.
+    if let serde_json::Value::Object(map) = &mut body {
+        if let Some(ep) = inference_endpoint.as_deref() {
+            // Worker reports `:50053` (port-only); coordinator pairs it with the
+            // observed public/wg IP to build a fully-qualified URL.
+            map.insert(
+                "inference_endpoint".into(),
+                serde_json::Value::String(ep.to_string()),
+            );
+        }
+        // control_endpoint is always advertised — it's up regardless of
+        // whether a model is currently loaded, so the coordinator can route
+        // a load_model RPC to it.
         map.insert(
-            "inference_endpoint".into(),
-            serde_json::Value::String(ep.to_string()),
+            "control_endpoint".into(),
+            serde_json::Value::String(control_endpoint.to_string()),
         );
+        if let Some(m) = current_model.as_deref() {
+            map.insert(
+                "current_model".into(),
+                serde_json::Value::String(m.to_string()),
+            );
+        }
     }
     match client.post(url).json(&body).send().await {
         Ok(r) => {
             if r.status().is_success() {
-                tracing::debug!(node = %info.node_id, gpus = info.gpus.len(), "inventory published");
+                tracing::debug!(
+                    node = %info.node_id,
+                    gpus = info.gpus.len(),
+                    model = current_model.as_deref().unwrap_or("none"),
+                    "inventory published",
+                );
             } else {
                 tracing::warn!(node = %info.node_id, status = %r.status(), "inventory upload rejected");
             }

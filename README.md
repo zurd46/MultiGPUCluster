@@ -146,9 +146,11 @@ The admin page on `/` shows live service health, the coordinator's node registry
 | `/health`, `/ready` | gateway | Liveness / readiness | none |
 | `/api/v1/nodes`, `/api/v1/audit`, `/api/v1/enroll/tokens` | mgmt | Node + audit + enrollment-token admin | `Authorization: Bearer ADMIN_API_KEY` |
 | `/api/v1/keys`, `/api/v1/keys/{id}`, `/api/v1/keys/{id}/revoke`, `/api/v1/keys/verify` | mgmt | Customer-key CRUD + service-side verify | admin |
-| `/api/v1/settings` (GET/PUT) | mgmt | Cluster-wide settings KV (public base URL, default model, rate limit, max tokens) | admin |
-| `/api/v1/models` (GET/POST) · `/api/v1/models/{id}` (PATCH/DELETE) | mgmt | Model registry powering `/v1/models` | admin |
+| `/api/v1/settings` (GET/PUT) | mgmt | Cluster-wide settings KV (public base URL, default model, rate limit, max tokens, **HuggingFace API token**) | admin |
+| `/api/v1/models` (GET/POST) · `/api/v1/models/{id}` (PATCH/DELETE) | mgmt | Model registry powering `/v1/models` (incl. HF source: `hf_repo`, `hf_file`) | admin |
+| `/api/v1/models/{id}/load?node_id=…` (POST) | mgmt → coordinator → worker | Tells the chosen worker to fetch the GGUF from HuggingFace and restart its llama-server | admin |
 | `/cluster/nodes`, `/cluster/nodes/eligible`, `/cluster/nodes/report` | coordinator (`:7001`) | Live registry + dispatch view + worker upload | mTLS (workers) / none in dev |
+| `/cluster/nodes/{id}/load_model` | coordinator → worker control plane (`:50054`) | Internal: proxy that forwards a load_model RPC onto the worker | admin via mgmt |
 | `/v1/models`, `/v1/chat/completions` | openai-api (`:7200`) | OpenAI-compatible | `Authorization: Bearer mgc_<token>` (customer key) |
 | `/enroll` | mgmt | Worker enrollment (alias for `/api/v1/enroll`) | one-time enrollment token |
 
@@ -214,13 +216,37 @@ The `token` is shown **only once**. The admin UI also lets you edit, revoke (sof
 
 ### 5. Register a model + cluster settings (one-time)
 
-The admin UI has two new panels:
+The admin UI has two panels:
 
-- **Cluster settings** — public base URL, default model, rate limit (rpm), max tokens default. Stored in the `cluster_settings` table; `/api/v1/settings` backs the UI.
-- **Models** — the registry that feeds `/v1/models`. Add an entry per model the cluster serves; mark one as default. Phase 2 syncs `status` from live worker state.
+- **Cluster settings** — public base URL, default model, rate limit (rpm), max tokens default, **HuggingFace API token** (optional, only needed for gated/private repos). Stored in the `cluster_settings` table; `/api/v1/settings` backs the UI. The token is admin-only on read/write and is redacted in the audit log.
+- **Models** — the registry that feeds `/v1/models`. Add an entry per model the cluster serves; mark one as default. The `status` column is synced from live worker heartbeats.
+
+#### Pull a model directly from HuggingFace
+
+Add a model row with HF source fields, then click **Load…** in the row actions and pick a worker. The worker downloads the GGUF into its `data-dir/models/`, stops the running `llama-server`, and respawns it against the new file. The model status flips through `downloading → loading → available` (or `error`) and the worker reports `current_model` on the next heartbeat.
 
 ```bash
-# Register a model
+# Register an HF-sourced model
+curl -X POST -H "Authorization: Bearer $ADMIN_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "id": "llama-3.2-1b-instruct",
+       "display_name": "Llama 3.2 1B Instruct",
+       "hf_repo": "bartowski/Llama-3.2-1B-Instruct-GGUF",
+       "hf_file": "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+       "is_default": true
+     }' \
+     https://cluster.example.com/api/v1/models
+
+# Tell a specific worker to fetch + load it
+curl -X POST -H "Authorization: Bearer $ADMIN_API_KEY" \
+     "https://cluster.example.com/api/v1/models/llama-3.2-1b-instruct/load?node_id=<NODE_ID>"
+# → { "ok": true, "model_id": "...", "node_id": "...", "status": "downloading" }
+```
+
+For non-HF models (legacy / dev), omit the HF fields and provision the GGUF on the worker via the `MODEL_PATH` env var:
+
+```bash
 curl -X POST -H "Authorization: Bearer $ADMIN_API_KEY" \
      -H "Content-Type: application/json" \
      -d '{"id":"llama-3.1-8b-instruct","display_name":"Llama 3.1 8B Instruct","is_default":true}' \
