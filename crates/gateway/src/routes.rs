@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
+    middleware as axmid,
     response::{Html, IntoResponse, Response},
     routing::{any, get},
     Json, Router,
@@ -10,6 +11,7 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::{
+    middleware as gw,
     proxy::{forward, Upstream},
     state::GatewayState,
 };
@@ -17,6 +19,16 @@ use crate::{
 const ADMIN_HTML: &str = include_str!("admin_ui.html");
 
 pub fn build(state: Arc<GatewayState>) -> Router {
+    // Customer-facing OpenAI-compatible API. Bearer token (mgc_*) required.
+    // The auth middleware lives on its own sub-router so it doesn't apply to
+    // /api/* (admin) or /cluster/* (worker) which have their own auth schemes.
+    let v1 = Router::new()
+        .route("/v1/{*rest}", any(openai_proxy))
+        .route_layer(axmid::from_fn_with_state(
+            state.clone(),
+            gw::require_v1_api_key,
+        ));
+
     Router::new()
         .route("/", get(index))
         .route("/health", get(health))
@@ -24,9 +36,9 @@ pub fn build(state: Arc<GatewayState>) -> Router {
         .route("/overview", get(overview))
         // Reverse-proxy fan-out — axum 0.8 wildcard syntax: {*rest}
         .route("/api/{*rest}", any(api_proxy))
-        .route("/v1/{*rest}", any(openai_proxy))
         .route("/cluster/{*rest}", any(cluster_proxy))
         .route("/enroll", any(enroll_proxy))
+        .merge(v1)
         .with_state(state)
 }
 

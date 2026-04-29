@@ -39,3 +39,4 @@ governor.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 ipnet.workspace = true
+dashmap.workspace = true

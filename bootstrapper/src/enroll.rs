@@ -25,7 +25,7 @@ struct EnrollResponse {
     coordinator_endpoint: String,
 }
 
-pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Result<()> {
+pub async fn run(backend: &str, token: &str, display_name: Option<&str>, insecure: bool) -> Result<()> {
     let mut info = gpucluster_sysinfo::collect()?;
     if let Some(name) = display_name {
         info.display_name = name.to_string();
@@ -49,7 +49,12 @@ pub async fn run(backend: &str, token: &str, display_name: Option<&str>) -> Resu
     let url = format!("{}/enroll", backend.trim_end_matches('/'));
     tracing::info!(%url, "submitting enrollment");
 
-    let client = reqwest::Client::builder().build()?;
+    let mut client_builder = reqwest::Client::builder();
+    if insecure {
+        tracing::warn!("--insecure: accepting self-signed TLS certs (dev only)");
+        client_builder = client_builder.danger_accept_invalid_certs(true);
+    }
+    let client = client_builder.build()?;
     let resp = client.post(&url).json(&payload).send().await
         .context("enrollment request failed")?;
 
