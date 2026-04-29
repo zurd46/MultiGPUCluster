@@ -1,0 +1,13 @@
+target/
+**/target/
+**/node_modules/
+.git/
+.github/
+docs/
+backend/postgres-data/
+backend/redis-data/
+backend/minio-data/
+**/*.log
+.env
+.env.*
+!.env.example
