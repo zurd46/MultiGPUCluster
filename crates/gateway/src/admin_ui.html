@@ -522,6 +522,52 @@
     </div>
   </section>
 
+  <!-- API Keys -->
+  <section class="table-wrap">
+    <div class="table-head">
+      <h3>API keys <span class="pill info" id="keys-count">0</span></h3>
+      <input class="filter" id="filter-keys" type="text" placeholder="Filter by name, prefix, scope…" />
+    </div>
+
+    <form class="keys-form" id="key-form" onsubmit="return false;">
+      <div>
+        <label for="key-name">Name</label>
+        <input id="key-name" type="text" placeholder="lm-studio-laptop" required />
+      </div>
+      <div>
+        <label for="key-scope">Scope</label>
+        <select id="key-scope">
+          <option value="inference">inference</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+      <div>
+        <label for="key-ttl">TTL (days, optional)</label>
+        <input id="key-ttl" type="number" min="1" max="365" placeholder="∞" />
+      </div>
+      <button id="key-create" type="submit" class="btn primary">+ Create key</button>
+    </form>
+
+    <div id="new-key" class="new-key-banner">
+      <div class="title">✓ Key created — copy it now, it will never be shown again</div>
+      <div class="token-row">
+        <code id="new-key-token"></code>
+        <button id="new-key-copy" class="btn">Copy</button>
+        <button id="new-key-dismiss" class="btn">Dismiss</button>
+      </div>
+      <div class="hint">Use this as <code>Authorization: Bearer &lt;token&gt;</code> on <code>/v1/*</code>, or paste it into LM Studio's API key field.</div>
+    </div>
+
+    <div style="overflow-x: auto;">
+      <table id="tbl-keys">
+        <thead><tr>
+          <th>Name</th><th>Prefix</th><th>Scope</th><th>Created</th><th>Last used</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody><tr><td colspan="7" class="empty">enter admin key above…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- Raw JSON -->
   <details class="raw">
     <summary>Raw <code>/overview</code> response</summary>
