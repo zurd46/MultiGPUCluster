@@ -253,6 +253,12 @@ pub struct LoadQuery {
     /// Worker that should download + run this model. Required — there's no
     /// useful "auto-pick a node" for now (the scheduler is Phase 3).
     pub node_id: String,
+    /// When `true`, mgmt asks the coordinator for all *other* eligible nodes
+    /// and passes their `rpc-server` endpoints to the primary so it spawns
+    /// `llama-server --rpc peer1,peer2,...`. Default false keeps the
+    /// existing single-node load path.
+    #[serde(default)]
+    pub multi_node: bool,
 }
 
 /// POST /api/v1/models/{id}/load?node_id=…
@@ -306,14 +312,54 @@ pub async fn load(
     if !q.node_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(ApiError::BadRequest("node_id must be a UUID".into()));
     }
+    let coord = gpucluster_common::clients::CoordClient::new(s.coordinator_endpoint.clone());
+
+    // Multi-node: pull the eligible-nodes view, drop ourselves, and turn the
+    // remaining workers' addresses into a `host:port` list aimed at their
+    // `rpc-server` ports (50052). The primary worker spawns
+    // `llama-server --rpc <peers>` and llama.cpp distributes layers.
+    let peers: Vec<String> = if q.multi_node {
+        match coord.eligible_nodes().await {
+            Ok(v) => v
+                .get("nodes")
+                .and_then(|a| a.as_array())
+                .map(|nodes| {
+                    nodes.iter()
+                        .filter_map(|n| {
+                            // Skip self — the primary serves its own GPU
+                            // through the local in-process backend, not via
+                            // the loopback rpc-server hop.
+                            let nid = n.get("node_id").and_then(|x| x.as_str()).unwrap_or("");
+                            if nid == q.node_id { return None; }
+                            // Prefer wg_ip over public_ip so we go over the
+                            // mesh once Headscale is up.
+                            let host = n.get("wg_ip").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+                                .or_else(|| n.get("public_ip").and_then(|x| x.as_str()))
+                                .unwrap_or_default();
+                            let port = n.get("rpc_port").and_then(|x| x.as_u64()).unwrap_or(50052);
+                            if host.is_empty() { return None; }
+                            Some(format!("{host}:{port}"))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(e) => {
+                tracing::warn!(error = %e, "couldn't fetch eligible nodes for multi-node load — falling back to single-node");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
     let body = json!({
         "model_id":       id,
         "hf_repo":        model.hf_repo,
         "hf_file":        model.hf_file,
         "hf_token":       token,
         "local_filename": local_filename,
+        "peers":          peers,
     });
-    let coord = gpucluster_common::clients::CoordClient::new(s.coordinator_endpoint.clone());
     coord.load_model(&q.node_id, &body).await.map_err(|e| match e {
         gpucluster_common::clients::ClientError::Upstream { status, body, .. } => {
             ApiError::Internal(format!("coordinator rejected load (status={status}): {body}"))
