@@ -93,8 +93,17 @@ Das Backend ist eine **komplette deploybare Einheit** — z.B.:
 
 Inhalt: Gateway + Coordinator + Mgmt-Backend + Postgres + Redis + MinIO + WG-Hub + Reverse-Proxy. Eine Installation, ein Update-Pfad.
 
-### Clients = Container
-Schlankes Worker-Image (`gpucluster/worker:VERSION-cudaXX.X`), das vom Bootstrapper auf User-Hosts gestartet wird. Keine separate Installation, kein OS-Eingriff jenseits Docker/WSL2.
+### Clients = Container ODER Native Binary
+
+**Linux / Windows+WSL2 (NVIDIA):** Schlankes Worker-Image (`gpucluster/worker:VERSION-cudaXX.X`), das vom Bootstrapper auf User-Hosts gestartet wird. Keine separate Installation, kein OS-Eingriff jenseits Docker/WSL2.
+
+**macOS (Apple Silicon):** Native `.pkg`-Distribution mit `gpucluster-agent` + `gpucluster-worker` + `rpc-server-ext` als universal-Binaries unter `/usr/local/bin/`. Kein Docker — Metal-Devices können nicht in Linux-Container durchgereicht werden, der Worker läuft daher als launchd-Daemon (`com.gpucluster.agent`) direkt auf dem Host. Selbe Enrollment-Story, selbe Mesh-VPN, selber Coordinator-Endpoint.
+
+```
+Verteilung pro Plattform:
+  Linux/WSL2  → Docker-Image (FROM nvidia/cuda)        → CUDA RPC
+  macOS AS    → /Library/Application Support/gpucluster → Metal RPC (launchd)
+```
 
 ---
 
